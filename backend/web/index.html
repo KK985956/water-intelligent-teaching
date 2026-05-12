@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>水利智能教学应用工作台</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Water Teaching Studio</p>
+        <h1>水利智能教学应用工作台</h1>
+      </div>
+      <div class="topbar-actions">
+        <span class="status-pill" id="session-status">未登录</span>
+        <button class="ghost-button" id="refresh-dashboard" type="button">刷新数据</button>
+        <button class="ghost-button danger" id="logout-button" type="button">退出登录</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="hero-card">
+        <div class="hero-copy">
+          <p class="eyebrow">Template · Generate · Validate · Export</p>
+          <h2>把需求分析、概要设计和详细设计，真正变成可操作的教学资料生产台。</h2>
+          <p class="hero-text">
+            登录后可以直接完成模板浏览、教学方案生成、课件生成、资源上传、格式校验和导出分享。
+            页面与后端同源部署，打开首页即可开始操作。
+          </p>
+          <div class="seed-grid">
+            <button class="seed-pill" data-username="teacher" data-password="teacher123" data-captcha="2026" type="button">教师账号</button>
+            <button class="seed-pill" data-username="admin" data-password="admin123" data-captcha="2026" type="button">管理员账号</button>
+            <button class="seed-pill" data-username="student" data-password="student123" data-captcha="2026" type="button">学生账号</button>
+          </div>
+        </div>
+
+        <form class="login-card" id="login-form">
+          <div class="card-head">
+            <h3>登录系统</h3>
+            <p>使用后端内置演示账号完成鉴权。</p>
+          </div>
+          <label>
+            <span>用户名</span>
+            <input id="login-username" name="username" autocomplete="username" placeholder="teacher" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="teacher123" required />
+          </label>
+          <label>
+            <span>验证码</span>
+            <input id="login-captcha" name="captcha" placeholder="2026" required />
+          </label>
+          <button class="primary-button" id="login-submit" type="submit">进入工作台</button>
+        </form>
+      </section>
+
+      <section class="metrics-strip is-locked" id="metrics-strip">
+        <article class="metric-card">
+          <span class="metric-label">模板数量</span>
+          <strong class="metric-value" id="metric-templates">0</strong>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">资源数量</span>
+          <strong class="metric-value" id="metric-resources">0</strong>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">最近任务</span>
+          <strong class="metric-value" id="metric-tasks">0</strong>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">成功任务</span>
+          <strong class="metric-value" id="metric-success">0</strong>
+        </article>
+      </section>
+
+      <section class="workspace-grid is-locked" id="workspace-grid">
+        <article class="panel panel-templates">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Template Center</p>
+              <h3>模板中心</h3>
+            </div>
+            <button class="ghost-button" id="load-templates" type="button">刷新模板</button>
+          </div>
+          <form class="inline-form" id="template-filter-form">
+            <select id="template-filter-type">
+              <option value="">全部类型</option>
+              <option value="THEORY">理论课</option>
+              <option value="PRACTICE">实训课</option>
+              <option value="TRAINING">培训课</option>
+              <option value="REVIEW">复习课</option>
+            </select>
+            <input id="template-filter-keyword" placeholder="搜索模板名" />
+            <button class="secondary-button" type="submit">筛选</button>
+          </form>
+          <div class="template-list" id="template-list"></div>
+        </article>
+
+        <article class="panel panel-plan">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Plan Generator</p>
+              <h3>教学方案生成</h3>
+            </div>
+          </div>
+          <form class="stack-form" id="plan-form">
+            <label>
+              <span>方案模板</span>
+              <select id="plan-template" required></select>
+            </label>
+            <label>
+              <span>课程名称</span>
+              <input id="plan-course-name" placeholder="例如：水文地质学" required />
+            </label>
+            <div class="split-fields">
+              <label>
+                <span>课时数</span>
+                <input id="plan-hours" type="number" min="1" value="16" required />
+              </label>
+              <label>
+                <span>授课对象</span>
+                <input id="plan-audience" placeholder="本科二年级" required />
+              </label>
+            </div>
+            <label>
+              <span>教学目标</span>
+              <textarea id="plan-goals" rows="4" placeholder="每行一个目标"></textarea>
+            </label>
+            <label>
+              <span>教学重难点</span>
+              <textarea id="plan-focus-points" rows="3" placeholder="每行一个重点或难点"></textarea>
+            </label>
+            <button class="primary-button" id="plan-submit" type="submit">生成教学方案</button>
+          </form>
+        </article>
+
+        <article class="panel panel-courseware">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Courseware Generator</p>
+              <h3>教学课件生成</h3>
+            </div>
+          </div>
+          <form class="stack-form" id="courseware-form">
+            <label>
+              <span>来源方案</span>
+              <select id="courseware-plan-id" required></select>
+            </label>
+            <label>
+              <span>课件模板</span>
+              <select id="courseware-template" required></select>
+            </label>
+            <div>
+              <span class="field-caption">资源引用</span>
+              <div class="resource-picks" id="resource-picks"></div>
+            </div>
+            <button class="primary-button" id="courseware-submit" type="submit">生成教学课件</button>
+          </form>
+        </article>
+
+        <article class="panel panel-resources">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Resource Hub</p>
+              <h3>教学资源</h3>
+            </div>
+            <button class="ghost-button" id="load-resources" type="button">刷新资源</button>
+          </div>
+          <form class="stack-form" id="resource-form">
+            <div class="split-fields">
+              <label>
+                <span>资源类型</span>
+                <select id="resource-type" required>
+                  <option value="CASE">案例</option>
+                  <option value="IMAGE">图片</option>
+                  <option value="VIDEO">视频</option>
+                  <option value="FORMULA">公式</option>
+                  <option value="EXERCISE">习题</option>
+                </select>
+              </label>
+              <label>
+                <span>标签</span>
+                <input id="resource-tags" placeholder="地下水,案例" />
+              </label>
+            </div>
+            <label class="file-field">
+              <span>上传文件</span>
+              <input id="resource-file" type="file" required />
+            </label>
+            <button class="secondary-button" id="resource-submit" type="submit">上传资源</button>
+          </form>
+          <div class="resource-list" id="resource-list"></div>
+        </article>
+
+        <article class="panel panel-tasks panel-wide">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Task Timeline</p>
+              <h3>任务中心</h3>
+            </div>
+            <button class="ghost-button" id="load-tasks" type="button">刷新任务</button>
+          </div>
+          <div class="task-list" id="task-list"></div>
+        </article>
+
+        <article class="panel panel-preview panel-wide">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Live Preview</p>
+              <h3>结果预览</h3>
+            </div>
+            <span class="muted-note" id="preview-title">选择一个成功任务后查看预览</span>
+          </div>
+          <div class="preview-shell">
+            <iframe id="preview-frame" title="预览内容"></iframe>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <aside class="toast-stack" id="toast-stack"></aside>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

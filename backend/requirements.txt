@@ -1,0 +1,5 @@
+Flask>=2.2,<4
+itsdangerous>=2.1
+Jinja2>=3.0
+Werkzeug>=2.2
+websockets>=15.0

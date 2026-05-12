@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>水利智能教学应用工作台</title>
+  <link rel="stylesheet" href="/assets/dashboard.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <p class="eyebrow">Hydro Teaching Console</p>
+        <h1>水利智能教学应用工作台</h1>
+        <p class="brand-summary">
+          一套围绕模板、方案、课件、资源、校验与导出的水利教学资料生产台。
+        </p>
+      </div>
+      <div class="topbar-actions">
+        <span class="status-pill" id="session-status">未登录</span>
+        <span class="status-pill status-pill--subtle" id="realtime-status">实时通道未连接</span>
+        <button class="ghost-button" id="refresh-dashboard" type="button">刷新工作台</button>
+        <button class="ghost-button danger" id="logout-button" type="button">退出登录</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="hero-card">
+        <div class="hero-copy">
+          <p class="eyebrow">Template · Generate · Validate · Export</p>
+          <h2>把设计文档真正推向可生成、可校验、可预览、可导出的教学操作现场。</h2>
+          <p class="hero-text">
+            登录后就能从模板出发，生成水利教学方案、继续装配教学课件、上传资源、执行格式校验，并完成导出分享。
+          </p>
+
+          <div class="workflow-ribbon">
+            <article class="workflow-step">
+              <span class="workflow-index">01</span>
+              <div>
+                <strong>模板筛选</strong>
+                <p>快速锁定理论课、实训课、培训课模板。</p>
+              </div>
+            </article>
+            <article class="workflow-step">
+              <span class="workflow-index">02</span>
+              <div>
+                <strong>方案生成</strong>
+                <p>自动组织教学目标、流程、案例与练习。</p>
+              </div>
+            </article>
+            <article class="workflow-step">
+              <span class="workflow-index">03</span>
+              <div>
+                <strong>课件装配</strong>
+                <p>从已成功的方案继续生成多页课件结构。</p>
+              </div>
+            </article>
+            <article class="workflow-step">
+              <span class="workflow-index">04</span>
+              <div>
+                <strong>校验导出</strong>
+                <p>在线预览结果并完成导出与分享。</p>
+              </div>
+            </article>
+          </div>
+
+          <div class="seed-grid">
+            <button class="seed-pill" data-username="teacher" data-password="teacher123" data-captcha="2026" type="button">教师账号</button>
+            <button class="seed-pill" data-username="admin" data-password="admin123" data-captcha="2026" type="button">管理员账号</button>
+            <button class="seed-pill" data-username="student" data-password="student123" data-captcha="2026" type="button">学生账号</button>
+          </div>
+        </div>
+
+        <form class="login-card" id="login-form">
+          <div class="card-head">
+            <span class="card-tag">Demo Access</span>
+            <h3>进入系统</h3>
+            <p>使用后端内置账号，立即进入当前工作台。</p>
+          </div>
+          <label>
+            <span>用户名</span>
+            <input id="login-username" name="username" autocomplete="username" placeholder="teacher" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="teacher123" required />
+          </label>
+          <label>
+            <span>验证码</span>
+            <input id="login-captcha" name="captcha" placeholder="2026" required />
+          </label>
+          <p class="form-note">系统已预置教师、管理员、学生三种角色，可直接体验不同权限边界。</p>
+          <button class="primary-button" id="login-submit" type="submit">进入工作台</button>
+        </form>
+      </section>
+
+      <section class="metrics-strip is-locked" id="metrics-strip">
+        <article class="metric-card metric-card--templates">
+          <span class="metric-label">模板数量</span>
+          <strong class="metric-value" id="metric-templates">0</strong>
+          <small class="metric-detail">方案与课件生成入口</small>
+        </article>
+        <article class="metric-card metric-card--resources">
+          <span class="metric-label">资源数量</span>
+          <strong class="metric-value" id="metric-resources">0</strong>
+          <small class="metric-detail">案例、图片、视频、公式、习题</small>
+        </article>
+        <article class="metric-card metric-card--tasks">
+          <span class="metric-label">最近任务</span>
+          <strong class="metric-value" id="metric-tasks">0</strong>
+          <small class="metric-detail">持续轮询执行进度</small>
+        </article>
+        <article class="metric-card metric-card--success">
+          <span class="metric-label">成功任务</span>
+          <strong class="metric-value" id="metric-success">0</strong>
+          <small class="metric-detail">可继续预览、校验与导出</small>
+        </article>
+      </section>
+
+      <section class="workspace-grid is-locked" id="workspace-grid">
+        <article class="panel panel-templates panel-tone-cool">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Template Center</p>
+              <h3>模板中心</h3>
+              <p class="panel-summary">先选结构，再填内容，让后续生成链路稳定而统一。</p>
+            </div>
+            <button class="ghost-button" id="load-templates" type="button">刷新模板</button>
+          </div>
+          <form class="inline-form" id="template-filter-form">
+            <select id="template-filter-type">
+              <option value="">全部类型</option>
+              <option value="THEORY">理论课</option>
+              <option value="PRACTICE">实训课</option>
+              <option value="TRAINING">培训课</option>
+              <option value="REVIEW">复习课</option>
+            </select>
+            <input id="template-filter-keyword" placeholder="搜索模板名称" />
+            <button class="secondary-button" type="submit">筛选</button>
+          </form>
+          <div class="template-list" id="template-list"></div>
+        </article>
+
+        <article class="panel panel-versions panel-tone-stage">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Template Versioning</p>
+              <h3>模板版本与回滚</h3>
+              <p class="panel-summary">为现有模板上传新版本，保留历史并按版本号快速回退。</p>
+            </div>
+            <span class="muted-note" id="template-version-note">选择一个模板后查看版本</span>
+          </div>
+          <form class="stack-form" id="template-version-form">
+            <label>
+              <span>目标模板</span>
+              <select id="template-version-target" required></select>
+            </label>
+            <label>
+              <span>模板显示名称</span>
+              <input id="template-version-name" placeholder="为空时沿用当前名称" />
+            </label>
+            <label>
+              <span>变更说明</span>
+              <input id="template-version-log" placeholder="例如：补充章节占位符与版式" required />
+            </label>
+            <label>
+              <span>规则 JSON</span>
+              <textarea id="template-version-rules" rows="4" placeholder='可选，例如：{"required_sections":["教学目标","教学流程"]}'></textarea>
+            </label>
+            <label class="file-field">
+              <span>新版本文件</span>
+              <input id="template-version-file" type="file" required />
+            </label>
+            <button class="secondary-button" id="template-version-submit" type="submit">上传新版本</button>
+          </form>
+          <div class="version-list" id="template-version-list"></div>
+        </article>
+
+        <article class="panel panel-plan panel-tone-water">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Plan Generator</p>
+              <h3>教学方案生成</h3>
+              <p class="panel-summary">输入课程参数后，自动组织教学目标、环节时间、案例与课堂练习。</p>
+            </div>
+          </div>
+          <form class="stack-form" id="plan-form">
+            <label>
+              <span>方案模板</span>
+              <select id="plan-template" required></select>
+            </label>
+            <label>
+              <span>课程名称</span>
+              <input id="plan-course-name" placeholder="例如：水文地质学" required />
+            </label>
+            <div class="split-fields">
+              <label>
+                <span>课时数</span>
+                <input id="plan-hours" type="number" min="1" value="16" required />
+              </label>
+              <label>
+                <span>授课对象</span>
+                <input id="plan-audience" placeholder="本科二年级" required />
+              </label>
+            </div>
+            <label>
+              <span>教学目标</span>
+              <textarea id="plan-goals" rows="4" placeholder="每行填写一个教学目标"></textarea>
+            </label>
+            <label>
+              <span>教学重难点</span>
+              <textarea id="plan-focus-points" rows="3" placeholder="每行填写一个重点或难点"></textarea>
+            </label>
+            <p class="form-note">建议把目标写得更具体，系统匹配的内容结构和案例会更贴近实际教学场景。</p>
+            <button class="primary-button" id="plan-submit" type="submit">生成教学方案</button>
+          </form>
+        </article>
+
+        <article class="panel panel-courseware panel-tone-earth">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Courseware Generator</p>
+              <h3>教学课件生成</h3>
+              <p class="panel-summary">从成功方案继续推进，自动拼装成适合课堂展示的课件页结构。</p>
+            </div>
+          </div>
+          <form class="stack-form" id="courseware-form">
+            <label>
+              <span>来源方案</span>
+              <select id="courseware-plan-id" required></select>
+            </label>
+            <label>
+              <span>课件模板</span>
+              <select id="courseware-template" required></select>
+            </label>
+            <div>
+              <span class="field-caption">资源引用</span>
+              <div class="resource-picks" id="resource-picks"></div>
+            </div>
+            <p class="form-note">勾选的资源会作为案例、图片或补充内容一起参与课件结构生成。</p>
+            <button class="primary-button" id="courseware-submit" type="submit">生成教学课件</button>
+          </form>
+        </article>
+
+        <article class="panel panel-resources panel-tone-slate">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Resource Hub</p>
+              <h3>教学资源</h3>
+              <p class="panel-summary">把案例、图片、视频、公式和习题维护成可复用的资源池。</p>
+            </div>
+            <button class="ghost-button" id="load-resources" type="button">刷新资源</button>
+          </div>
+          <form class="stack-form" id="resource-form">
+            <div class="split-fields">
+              <label>
+                <span>资源类型</span>
+                <select id="resource-type" required>
+                  <option value="CASE">案例</option>
+                  <option value="IMAGE">图片</option>
+                  <option value="VIDEO">视频</option>
+                  <option value="FORMULA">公式</option>
+                  <option value="EXERCISE">习题</option>
+                </select>
+              </label>
+              <label>
+                <span>标签</span>
+                <input id="resource-tags" placeholder="地下水,案例" />
+              </label>
+            </div>
+            <label class="file-field">
+              <span>上传文件</span>
+              <input id="resource-file" type="file" required />
+            </label>
+            <p class="form-note">标签越具体，方案与课件在后续引用时就越容易命中正确素材。</p>
+            <button class="secondary-button" id="resource-submit" type="submit">上传资源</button>
+          </form>
+          <div class="resource-list" id="resource-list"></div>
+        </article>
+
+        <article class="panel panel-users panel-tone-stage">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">User Console</p>
+              <h3>用户管理</h3>
+              <p class="panel-summary">管理员可创建用户、切换角色、启停账号，并按需重置密码。</p>
+            </div>
+            <button class="ghost-button" id="load-users" type="button">刷新用户</button>
+          </div>
+          <p class="form-note" id="user-panel-note">仅管理员可使用本区域。</p>
+          <form class="stack-form" id="user-form">
+            <div class="split-fields">
+              <label>
+                <span>用户名</span>
+                <input id="user-username" placeholder="例如：teacher02" required />
+              </label>
+              <label>
+                <span>初始密码</span>
+                <input id="user-password" type="password" placeholder="不少于 6 位" required />
+              </label>
+            </div>
+            <div class="split-fields">
+              <label>
+                <span>姓名</span>
+                <input id="user-real-name" placeholder="张老师" required />
+              </label>
+              <label>
+                <span>部门</span>
+                <input id="user-dept" placeholder="水利工程系" />
+              </label>
+            </div>
+            <div class="split-fields">
+              <label>
+                <span>角色</span>
+                <select id="user-role" required></select>
+              </label>
+              <label>
+                <span>状态</span>
+                <select id="user-status">
+                  <option value="1">启用</option>
+                  <option value="0">停用</option>
+                </select>
+              </label>
+            </div>
+            <button class="secondary-button" id="user-submit" type="submit">创建用户</button>
+          </form>
+          <div class="user-list" id="user-list"></div>
+        </article>
+
+        <article class="panel panel-tasks panel-tone-neutral">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Task Timeline</p>
+              <h3>任务中心</h3>
+              <p class="panel-summary">集中查看每个方案或课件任务的进度、结果对象和导出入口。</p>
+            </div>
+            <button class="ghost-button" id="load-tasks" type="button">刷新任务</button>
+          </div>
+          <div class="task-list" id="task-list"></div>
+        </article>
+
+        <article class="panel panel-preview panel-tone-stage">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Live Preview</p>
+              <h3>结果预览</h3>
+              <p class="panel-summary">点击成功任务的“预览”，即可在这里查看实际生成的 HTML 成果。</p>
+            </div>
+            <span class="muted-note" id="preview-title">选择一个成功任务后查看预览</span>
+          </div>
+          <div class="preview-shell">
+            <iframe id="preview-frame" title="预览内容"></iframe>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <aside class="toast-stack" id="toast-stack"></aside>
+  <script src="/assets/dashboard-v2.js"></script>
+</body>
+</html>
