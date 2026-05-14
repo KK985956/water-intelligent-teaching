@@ -386,6 +386,79 @@ label span,
   gap: 14px;
 }
 
+.role-flow {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.8fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 20px;
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(244, 249, 252, 0.76)),
+    radial-gradient(circle at 5% 15%, rgba(15, 103, 127, 0.1), transparent 36%);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px);
+}
+
+.flow-copy h3 {
+  margin: 0 0 8px;
+  font-family: "STZhongsong", "FangSong", "KaiTi", serif;
+  font-size: 24px;
+}
+
+.flow-copy p {
+  margin: 0;
+}
+
+.step-nav {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 10px;
+}
+
+.step-tab {
+  min-height: 62px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  text-align: left;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid var(--line);
+}
+
+.step-tab strong,
+.step-tab span {
+  display: block;
+}
+
+.step-tab strong {
+  font-size: 13px;
+}
+
+.step-tab span {
+  margin-top: 4px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.step-tab.is-active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border-color: transparent;
+  box-shadow: 0 16px 30px rgba(15, 103, 127, 0.22);
+}
+
+.step-tab.is-active span {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.step-controls {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .metric-card {
   min-height: 144px;
   padding: 22px;
@@ -443,6 +516,23 @@ label span,
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 18px;
+}
+
+.workspace-grid.step-mode .panel {
+  grid-column: span 6;
+  animation: panel-in 0.24s ease;
+}
+
+.workspace-grid.step-mode .panel-preview {
+  grid-column: span 6;
+}
+
+.workspace-grid.step-mode .panel-templates,
+.workspace-grid.step-mode .panel-plan,
+.workspace-grid.step-mode .panel-courseware,
+.workspace-grid.step-mode .panel-resources,
+.workspace-grid.step-mode .panel-editor {
+  grid-column: span 12;
 }
 
 .panel {
@@ -814,6 +904,11 @@ textarea:focus {
   display: none !important;
 }
 
+.role-hidden,
+.step-hidden {
+  display: none !important;
+}
+
 .is-locked {
   opacity: 0.48;
   pointer-events: none;
@@ -831,9 +926,28 @@ textarea:focus {
   }
 }
 
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 1240px) {
   .workspace-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .role-flow {
+    grid-template-columns: 1fr;
+  }
+
+  .step-controls {
+    justify-content: flex-start;
   }
 
   .panel-templates,
@@ -846,6 +960,16 @@ textarea:focus {
   .panel-editor,
   .panel-audits,
   .panel-preview {
+    grid-column: span 1;
+  }
+
+  .workspace-grid.step-mode .panel,
+  .workspace-grid.step-mode .panel-preview,
+  .workspace-grid.step-mode .panel-templates,
+  .workspace-grid.step-mode .panel-plan,
+  .workspace-grid.step-mode .panel-courseware,
+  .workspace-grid.step-mode .panel-resources,
+  .workspace-grid.step-mode .panel-editor {
     grid-column: span 1;
   }
 
@@ -866,6 +990,7 @@ textarea:focus {
   .topbar,
   .topbar-actions,
   .metrics-strip,
+  .role-flow,
   .workspace-grid,
   .inline-form,
   .split-fields,

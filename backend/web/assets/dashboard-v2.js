@@ -11,6 +11,8 @@ const state = {
   audits: [],
   activeContent: null,
   activeTemplateDetail: null,
+  activeStep: "templates",
+  availableSteps: [],
   pollingTimer: null,
   socket: null,
   socketMode: "idle",
@@ -18,6 +20,64 @@ const state = {
 
 const elements = {};
 const TERMINAL_STATUSES = new Set(["SUCCESS", "FAILED", "CANCELED"]);
+const STEP_DEFS = [
+  {
+    id: "templates",
+    title: "模板选择",
+    short: "选模板",
+    subtitle: "先选择理论课、实训课或培训课模板，作为后续生成的结构基础。",
+    permission: "templates:read",
+  },
+  {
+    id: "template-admin",
+    title: "模板维护",
+    short: "维护模板",
+    subtitle: "教师和管理员可以上传模板新版本、查看版本历史并执行版本回滚。",
+    permission: "templates:write",
+  },
+  {
+    id: "plan",
+    title: "教学方案",
+    short: "生成方案",
+    subtitle: "填写课程名称、课时、授课对象、教学目标和重难点，生成教学方案。",
+    permission: "generation:run",
+  },
+  {
+    id: "courseware",
+    title: "教学课件",
+    short: "生成课件",
+    subtitle: "基于已完成的教学方案继续生成课件页面结构和教学要点。",
+    permission: "generation:run",
+  },
+  {
+    id: "resources",
+    title: "教学资源",
+    short: "资源库",
+    subtitle: "查看或维护案例、图片、视频、公式和习题资源。",
+    permission: "resources:read",
+  },
+  {
+    id: "tasks",
+    title: "任务与预览",
+    short: "看结果",
+    subtitle: "查看生成进度、预览结果、执行校验、导出下载或分享文件。",
+    permission: "generation:run",
+  },
+  {
+    id: "editor",
+    title: "人工编辑",
+    short: "再编辑",
+    subtitle: "教师和管理员可以修改生成结果 JSON，并重新生成预览与导出源文件。",
+    permission: "content:edit",
+  },
+  {
+    id: "admin",
+    title: "系统管理",
+    short: "管理",
+    subtitle: "仅管理员可见，用于用户管理和关键操作审计追踪。",
+    permission: "users:manage",
+  },
+];
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheElements();
@@ -47,6 +107,12 @@ function cacheElements() {
     "login-captcha",
     "login-submit",
     "metrics-strip",
+    "role-flow",
+    "step-title",
+    "step-subtitle",
+    "step-nav",
+    "step-prev",
+    "step-next",
     "workspace-grid",
     "template-filter-form",
     "template-filter-type",
@@ -125,6 +191,9 @@ function bindEvents() {
   elements["login-form"].addEventListener("submit", handleLogin);
   elements["logout-button"].addEventListener("click", () => handleLogout());
   elements["refresh-dashboard"].addEventListener("click", () => guardedAction(loadDashboard));
+  elements["step-prev"].addEventListener("click", () => moveStep(-1));
+  elements["step-next"].addEventListener("click", () => moveStep(1));
+  elements["step-nav"].addEventListener("click", handleStepNavClick);
   elements["load-templates"].addEventListener("click", () => guardedAction(loadTemplates));
   elements["load-resources"].addEventListener("click", () => guardedAction(loadResources));
   elements["load-users"].addEventListener("click", () => guardedAction(loadAdminData));
@@ -184,6 +253,100 @@ function hasPermission(permission) {
   return state.permissions.includes(permission);
 }
 
+function hasPanelAccess(node) {
+  const permission = node.dataset.permission;
+  return !permission || hasPermission(permission);
+}
+
+function stepAllowed(step) {
+  return !step.permission || hasPermission(step.permission);
+}
+
+function refreshWorkflow() {
+  const isLoggedIn = Boolean(state.token && state.user);
+  elements["role-flow"].classList.toggle("is-locked", !isLoggedIn);
+  elements["workspace-grid"].classList.add("step-mode");
+
+  document.querySelectorAll("[data-permission]").forEach((node) => {
+    const canAccess = isLoggedIn && hasPanelAccess(node);
+    node.classList.toggle("role-hidden", !canAccess);
+  });
+
+  state.availableSteps = STEP_DEFS.filter((step) => {
+    if (!isLoggedIn || !stepAllowed(step)) return false;
+    return Boolean(document.querySelector(`[data-step="${step.id}"]:not(.role-hidden)`));
+  });
+
+  if (!state.availableSteps.length) {
+    state.activeStep = "";
+  } else if (!state.availableSteps.some((step) => step.id === state.activeStep)) {
+    state.activeStep = state.availableSteps[0].id;
+  }
+
+  renderStepNav();
+  renderVisibleStep();
+}
+
+function renderStepNav() {
+  if (!state.availableSteps.length) {
+    elements["step-nav"].innerHTML = `<div class="empty-state">登录后会显示当前角色可用的操作步骤。</div>`;
+    elements["step-title"].textContent = "按步骤完成教学资料生成";
+    elements["step-subtitle"].textContent = "管理员、教师、学生会看到不同的流程入口。";
+    elements["step-prev"].disabled = true;
+    elements["step-next"].disabled = true;
+    return;
+  }
+
+  elements["step-nav"].innerHTML = state.availableSteps
+    .map(
+      (step, index) => `
+        <button class="step-tab${step.id === state.activeStep ? " is-active" : ""}" data-step-target="${step.id}" type="button">
+          <strong>${String(index + 1).padStart(2, "0")} · ${escapeHtml(step.short)}</strong>
+          <span>${escapeHtml(step.title)}</span>
+        </button>
+      `
+    )
+    .join("");
+
+  const active = currentStep();
+  const index = active ? state.availableSteps.findIndex((step) => step.id === active.id) : -1;
+  elements["step-title"].textContent = active ? active.title : "按步骤完成教学资料生成";
+  elements["step-subtitle"].textContent = active ? active.subtitle : "请选择一个可用步骤。";
+  elements["step-prev"].disabled = index <= 0;
+  elements["step-next"].disabled = index < 0 || index >= state.availableSteps.length - 1;
+}
+
+function renderVisibleStep() {
+  document.querySelectorAll("[data-step]").forEach((panel) => {
+    const visible = panel.dataset.step === state.activeStep && !panel.classList.contains("role-hidden");
+    panel.classList.toggle("step-hidden", !visible);
+  });
+}
+
+function currentStep() {
+  return state.availableSteps.find((step) => step.id === state.activeStep);
+}
+
+function setActiveStep(stepId) {
+  if (!state.availableSteps.some((step) => step.id === stepId)) return;
+  state.activeStep = stepId;
+  renderStepNav();
+  renderVisibleStep();
+  elements["role-flow"].scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function moveStep(direction) {
+  const index = state.availableSteps.findIndex((step) => step.id === state.activeStep);
+  const next = state.availableSteps[index + direction];
+  if (next) setActiveStep(next.id);
+}
+
+function handleStepNavClick(event) {
+  const button = event.target.closest("[data-step-target]");
+  if (!button) return;
+  setActiveStep(button.dataset.stepTarget);
+}
+
 function refreshSessionUI() {
   const isLoggedIn = Boolean(state.token && state.user);
   elements["session-status"].textContent = isLoggedIn
@@ -194,6 +357,7 @@ function refreshSessionUI() {
   }
   elements["metrics-strip"].classList.toggle("is-locked", !isLoggedIn);
   elements["workspace-grid"].classList.toggle("is-locked", !isLoggedIn);
+  refreshWorkflow();
   setFormDisabled(elements["template-version-form"], !isLoggedIn || !hasPermission("templates:write"));
   setFormDisabled(elements["user-form"], !isLoggedIn || !hasPermission("users:manage"));
   setFormDisabled(elements["editor-form"], !isLoggedIn || !hasPermission("content:edit"));
@@ -333,6 +497,8 @@ function handleLogout(options = {}) {
   state.audits = [];
   state.activeContent = null;
   state.activeTemplateDetail = null;
+  state.activeStep = "templates";
+  state.availableSteps = [];
   renderTemplates();
   renderResources();
   renderTasks();
@@ -455,8 +621,11 @@ function renderTemplates() {
     return;
   }
   elements["template-list"].innerHTML = state.templates
-    .map(
-      (template) => `
+    .map((template) => {
+      const manageButton = hasPermission("templates:write")
+        ? `<button class="text-button" data-template-action="manage" data-template-id="${template.templateId}" type="button">版本管理</button>`
+        : "";
+      return `
         <article class="template-card" data-template-type="${escapeHtml(template.templateType)}">
           <h4>${escapeHtml(template.templateName)}</h4>
           <div class="template-meta">
@@ -469,11 +638,11 @@ function renderTemplates() {
             <button class="text-button" data-template-action="use-plan" data-template-id="${template.templateId}" type="button">用于方案</button>
             <button class="text-button" data-template-action="use-courseware" data-template-id="${template.templateId}" type="button">用于课件</button>
             <button class="text-button" data-template-action="preview" data-template-id="${template.templateId}" type="button">查看详情</button>
-            <button class="text-button" data-template-action="manage" data-template-id="${template.templateId}" type="button">版本管理</button>
+            ${manageButton}
           </div>
         </article>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
@@ -713,11 +882,11 @@ function renderTaskCard(task) {
       ? `<button class="text-button" data-task-action="preview" data-task-id="${task.taskId}" type="button">预览</button>`
       : "";
   const validateButton =
-    task.status === "SUCCESS" && result.targetId
+    hasPermission("validation:run") && task.status === "SUCCESS" && result.targetId
       ? `<button class="text-button" data-task-action="validate" data-task-id="${task.taskId}" type="button">校验</button>`
       : "";
   const editButton =
-    task.status === "SUCCESS" && result.targetId
+    hasPermission("content:edit") && task.status === "SUCCESS" && result.targetId
       ? `<button class="text-button" data-task-action="edit" data-task-id="${task.taskId}" type="button">编辑</button>`
       : "";
   const cancelButton =
@@ -729,7 +898,7 @@ function renderTaskCard(task) {
       ? `<button class="text-button" data-task-action="retry" data-task-id="${task.taskId}" type="button">重试</button>`
       : "";
   const exportButtons =
-    task.status === "SUCCESS" && result.targetId
+    hasPermission("exports:write") && task.status === "SUCCESS" && result.targetId
       ? availableExports(task)
           .map(
             (format) =>
@@ -795,6 +964,7 @@ async function handlePlanSubmit(event) {
     });
     mergeTask(task);
     toast(`已创建方案任务：${task.taskId}`, "success");
+    setActiveStep("tasks");
     schedulePolling();
   } catch (error) {
     handleError(error);
@@ -821,6 +991,7 @@ async function handleCoursewareSubmit(event) {
     });
     mergeTask(task);
     toast(`已创建课件任务：${task.taskId}`, "success");
+    setActiveStep("tasks");
     schedulePolling();
   } catch (error) {
     handleError(error);
@@ -962,17 +1133,20 @@ async function handleTemplateActions(event) {
   const templateId = button.dataset.templateId;
   if (button.dataset.templateAction === "use-plan") {
     elements["plan-template"].value = templateId;
+    setActiveStep("plan");
     toast("已将模板带入教学方案表单。", "info");
     return;
   }
   if (button.dataset.templateAction === "use-courseware") {
     elements["courseware-template"].value = templateId;
+    setActiveStep("courseware");
     toast("已将模板带入教学课件表单。", "info");
     return;
   }
   if (button.dataset.templateAction === "manage") {
     elements["template-version-target"].value = templateId;
     await ensureTemplateVersionDetail();
+    setActiveStep("template-admin");
     toast("已切换到模板版本管理区。", "info");
     return;
   }
@@ -983,6 +1157,7 @@ async function handleTemplateActions(event) {
     renderTemplateVersionList();
     elements["preview-frame"].srcdoc = buildTemplatePreview(detail);
     elements["preview-title"].textContent = `${detail.templateName} · 模板详情`;
+    setActiveStep("tasks");
   }
 }
 
@@ -1021,6 +1196,7 @@ async function openTaskPreview(task) {
   const html = await response.text();
   elements["preview-frame"].srcdoc = html;
   elements["preview-title"].textContent = `${task.result.targetType} · ${task.result.targetId}`;
+  setActiveStep("tasks");
   toast("预览内容已加载。", "info");
 }
 
@@ -1031,6 +1207,7 @@ async function loadTaskIntoEditor(task) {
   }
   elements["editor-target-type"].value = task.result.targetType;
   elements["editor-target-id"].value = task.result.targetId;
+  setActiveStep("editor");
   await loadEditorContent();
 }
 

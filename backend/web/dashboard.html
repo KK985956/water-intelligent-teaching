@@ -117,8 +117,21 @@
         </article>
       </section>
 
+      <section class="role-flow is-locked" id="role-flow">
+        <div class="flow-copy">
+          <p class="eyebrow">Role Based Workflow</p>
+          <h3 id="step-title">按步骤完成教学资料生成</h3>
+          <p id="step-subtitle">登录后系统会根据管理员、教师、学生三类角色生成不同的操作步骤。</p>
+        </div>
+        <div class="step-nav" id="step-nav" aria-label="工作流步骤"></div>
+        <div class="step-controls">
+          <button class="ghost-button" id="step-prev" type="button">上一步</button>
+          <button class="secondary-button" id="step-next" type="button">下一步</button>
+        </div>
+      </section>
+
       <section class="workspace-grid is-locked" id="workspace-grid">
-        <article class="panel panel-templates panel-tone-cool">
+        <article class="panel panel-templates panel-tone-cool" data-step="templates">
           <div class="panel-head">
             <div>
               <p class="eyebrow">Template Center</p>
@@ -141,7 +154,7 @@
           <div class="template-list" id="template-list"></div>
         </article>
 
-        <article class="panel panel-versions panel-tone-stage">
+        <article class="panel panel-versions panel-tone-stage" data-step="template-admin" data-permission="templates:write">
           <div class="panel-head">
             <div>
               <p class="eyebrow">Template Versioning</p>
@@ -176,7 +189,7 @@
           <div class="version-list" id="template-version-list"></div>
         </article>
 
-        <article class="panel panel-plan panel-tone-water">
+        <article class="panel panel-plan panel-tone-water" data-step="plan">
           <div class="panel-head">
             <div>
               <p class="eyebrow">Plan Generator</p>
@@ -216,7 +229,7 @@
           </form>
         </article>
 
-        <article class="panel panel-courseware panel-tone-earth">
+        <article class="panel panel-courseware panel-tone-earth" data-step="courseware">
           <div class="panel-head">
             <div>
               <p class="eyebrow">Courseware Generator</p>
@@ -242,7 +255,7 @@
           </form>
         </article>
 
-        <article class="panel panel-resources panel-tone-slate">
+        <article class="panel panel-resources panel-tone-slate" data-step="resources" data-permission="resources:read">
           <div class="panel-head">
             <div>
               <p class="eyebrow">Resource Hub</p>
@@ -251,7 +264,7 @@
             </div>
             <button class="ghost-button" id="load-resources" type="button">刷新资源</button>
           </div>
-          <form class="stack-form" id="resource-form">
+          <form class="stack-form" id="resource-form" data-permission="resources:write">
             <div class="split-fields">
               <label>
                 <span>资源类型</span>
@@ -278,7 +291,7 @@
           <div class="resource-list" id="resource-list"></div>
         </article>
 
-        <article class="panel panel-users panel-tone-stage">
+        <article class="panel panel-users panel-tone-stage" data-step="admin" data-permission="users:manage">
           <div class="panel-head">
             <div>
               <p class="eyebrow">User Console</p>
@@ -327,7 +340,7 @@
           <div class="user-list" id="user-list"></div>
         </article>
 
-        <article class="panel panel-tasks panel-tone-neutral">
+        <article class="panel panel-tasks panel-tone-neutral" data-step="tasks">
           <div class="panel-head">
             <div>
               <p class="eyebrow">Task Timeline</p>
@@ -357,7 +370,7 @@
           <div class="task-list" id="task-list"></div>
         </article>
 
-        <article class="panel panel-editor panel-tone-water">
+        <article class="panel panel-editor panel-tone-water" data-step="editor" data-permission="content:edit">
           <div class="panel-head">
             <div>
               <p class="eyebrow">Manual Editing</p>
@@ -389,7 +402,7 @@
           </form>
         </article>
 
-        <article class="panel panel-preview panel-tone-stage">
+        <article class="panel panel-preview panel-tone-stage" data-step="tasks">
           <div class="panel-head">
             <div>
               <p class="eyebrow">Live Preview</p>
@@ -403,7 +416,7 @@
           </div>
         </article>
 
-        <article class="panel panel-audits panel-tone-slate">
+        <article class="panel panel-audits panel-tone-slate" data-step="admin" data-permission="logs:read">
           <div class="panel-head">
             <div>
               <p class="eyebrow">Audit Trail</p>
