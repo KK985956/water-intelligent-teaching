@@ -466,12 +466,28 @@ label span,
   grid-column: span 3;
 }
 
+.panel-versions {
+  grid-column: span 4;
+}
+
+.panel-users {
+  grid-column: span 5;
+}
+
 .panel-tasks {
+  grid-column: span 4;
+}
+
+.panel-editor {
   grid-column: span 4;
 }
 
 .panel-preview {
   grid-column: span 5;
+}
+
+.panel-audits {
+  grid-column: span 3;
 }
 
 .panel-tone-cool {
@@ -522,7 +538,8 @@ label span,
 }
 
 .inline-form,
-.split-fields {
+.split-fields,
+.export-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -530,6 +547,15 @@ label span,
 
 .inline-form {
   margin-bottom: 14px;
+}
+
+.export-controls {
+  grid-template-columns: 1.2fr 0.8fr 1fr;
+  margin-bottom: 14px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--line);
 }
 
 .stack-form {
@@ -562,6 +588,13 @@ textarea {
   min-height: 96px;
 }
 
+#editor-content {
+  min-height: 420px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
 input:focus,
 select:focus,
 textarea:focus {
@@ -573,7 +606,8 @@ textarea:focus {
 .template-list,
 .resource-list,
 .task-list,
-.resource-picks {
+.resource-picks,
+.audit-list {
   display: grid;
   gap: 12px;
 }
@@ -585,6 +619,7 @@ textarea:focus {
 .template-card,
 .resource-card,
 .task-card,
+.audit-card,
 .pick-card,
 .empty-state {
   position: relative;
@@ -596,6 +631,7 @@ textarea:focus {
 .template-card,
 .resource-card,
 .task-card,
+.audit-card,
 .empty-state {
   padding: 16px;
   box-shadow: var(--shadow-md);
@@ -604,6 +640,7 @@ textarea:focus {
 .template-card:hover,
 .resource-card:hover,
 .task-card:hover,
+.audit-card:hover,
 .pick-card:hover {
   border-color: var(--line-strong);
   box-shadow: var(--shadow-lg);
@@ -611,14 +648,16 @@ textarea:focus {
 
 .template-card h4,
 .resource-card h4,
-.task-card h4 {
+.task-card h4,
+.audit-card h4 {
   margin: 0 0 10px;
   font-size: 16px;
 }
 
 .template-meta,
 .resource-meta,
-.task-meta {
+.task-meta,
+.audit-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -652,7 +691,8 @@ textarea:focus {
 }
 
 .task-body,
-.resource-body {
+.resource-body,
+.audit-body {
   color: var(--ink-soft);
   line-height: 1.75;
   font-size: 13px;
@@ -800,7 +840,11 @@ textarea:focus {
   .panel-plan,
   .panel-courseware,
   .panel-resources,
+  .panel-versions,
+  .panel-users,
   .panel-tasks,
+  .panel-editor,
+  .panel-audits,
   .panel-preview {
     grid-column: span 1;
   }
@@ -825,6 +869,7 @@ textarea:focus {
   .workspace-grid,
   .inline-form,
   .split-fields,
+  .export-controls,
   .workflow-ribbon {
     display: grid;
     grid-template-columns: 1fr;

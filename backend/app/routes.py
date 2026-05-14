@@ -5,6 +5,7 @@ from flask import jsonify, request, send_file, send_from_directory
 from .auth import current_user, require_auth
 from .services import (
     authenticate_user,
+    cancel_task,
     create_user,
     create_courseware_task,
     create_export,
@@ -13,18 +14,22 @@ from .services import (
     ensure_not_expired,
     get_export_record,
     get_export_record_by_token,
+    get_generated_content,
     get_preview_file,
     get_runtime_context,
     get_task,
     get_template_detail,
     increase_download_count,
+    list_audit_logs,
     list_roles,
     list_resources,
     list_tasks,
     list_templates,
     list_users,
+    retry_task,
     rollback_template_version,
     save_resource,
+    update_generated_content,
     update_user,
     upload_template_version,
     validate_target,
@@ -137,7 +142,17 @@ def register_routes(app):
     @app.get("/api/v1/tasks/<task_id>")
     @require_auth("generation:run")
     def task_detail(task_id):
-        return ok(get_task(task_id))
+        return ok(get_task(task_id, current_user()))
+
+    @app.post("/api/v1/tasks/<task_id>/cancel")
+    @require_auth("generation:run")
+    def task_cancel(task_id):
+        return ok(cancel_task(task_id, current_user()), "任务已取消")
+
+    @app.post("/api/v1/tasks/<task_id>/retry")
+    @require_auth("generation:run")
+    def task_retry(task_id):
+        return ok(retry_task(task_id, current_user()), "任务已重新入队")
 
     @app.get("/api/v1/tasks")
     @require_auth("generation:run")
@@ -181,11 +196,34 @@ def register_routes(app):
         payload = request.get_json(silent=True) or {}
         return ok(update_user(user_id, payload, user["user_id"]), "用户更新成功")
 
+    @app.get("/api/v1/audit-logs")
+    @require_auth("logs:read")
+    def audit_logs():
+        return ok(
+            list_audit_logs(
+                keyword=request.args.get("keyword"),
+                action=request.args.get("action"),
+                page=request.args.get("page", 1),
+                size=request.args.get("size", 20),
+            )
+        )
+
+    @app.get("/api/v1/content/<target_type>/<target_id>")
+    @require_auth("generation:run")
+    def content_detail(target_type, target_id):
+        return ok(get_generated_content(target_id, target_type, current_user()))
+
+    @app.patch("/api/v1/content/<target_type>/<target_id>")
+    @require_auth("content:edit")
+    def content_update(target_type, target_id):
+        payload = request.get_json(silent=True) or {}
+        return ok(update_generated_content(target_id, target_type, payload, current_user()), "内容已更新")
+
     @app.post("/api/v1/validation/format")
     @require_auth("validation:run")
     def validation():
         payload = request.get_json(silent=True) or {}
-        return ok(validate_target(payload.get("targetId", ""), payload.get("targetType", "")))
+        return ok(validate_target(payload.get("targetId", ""), payload.get("targetType", ""), current_user()))
 
     @app.get("/api/v1/resources")
     @require_auth("resources:read")
@@ -218,13 +256,14 @@ def register_routes(app):
             payload.get("expiryDays", app.config["DEFAULT_SHARE_DAYS"]),
             payload.get("shareScope", "private"),
             user["user_id"],
+            payload.get("maxDownloads", 0),
         )
         return ok(result, "导出成功")
 
     @app.get("/api/v1/exports/<int:export_id>/download")
     @require_auth("generation:run")
     def download_export(export_id):
-        export_row = get_export_record(export_id)
+        export_row = get_export_record(export_id, current_user())
         ensure_not_expired(export_row)
         increase_download_count(export_id)
         file_path = Path(export_row["file_path"])
@@ -233,7 +272,7 @@ def register_routes(app):
     @app.get("/api/v1/previews/<target_type>/<target_id>")
     @require_auth("generation:run")
     def preview(target_type, target_id):
-        preview_file = get_preview_file(target_type, target_id)
+        preview_file = get_preview_file(target_type, target_id, current_user())
         return send_file(preview_file, mimetype="text/html; charset=utf-8")
 
     @app.get("/share/<share_token>")

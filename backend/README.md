@@ -24,6 +24,8 @@
 python backend/run.py
 ```
 
+如果在 VS Code 里直接点运行，请运行 `backend/run.py`，不要运行 `backend/app/services.py` 这类包内部模块。
+
 默认地址：
 
 ```text

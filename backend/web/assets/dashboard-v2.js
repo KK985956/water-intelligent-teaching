@@ -8,6 +8,8 @@ const state = {
   tasks: [],
   roles: [],
   users: [],
+  audits: [],
+  activeContent: null,
   activeTemplateDetail: null,
   pollingTimer: null,
   socket: null,
@@ -27,6 +29,7 @@ document.addEventListener("DOMContentLoaded", () => {
   renderTasks();
   renderTemplateVersionList();
   renderUsers();
+  renderAudits();
   if (state.token) {
     guardedAction(loadDashboard);
   }
@@ -92,8 +95,21 @@ function cacheElements() {
     "load-users",
     "task-list",
     "load-tasks",
+    "export-share-scope",
+    "export-expiry-days",
+    "export-max-downloads",
+    "editor-form",
+    "editor-target-type",
+    "editor-target-id",
+    "editor-content",
+    "editor-load",
+    "editor-format",
+    "editor-save",
+    "editor-note",
     "preview-title",
     "preview-frame",
+    "audit-list",
+    "load-audits",
     "metric-templates",
     "metric-resources",
     "metric-tasks",
@@ -113,6 +129,10 @@ function bindEvents() {
   elements["load-resources"].addEventListener("click", () => guardedAction(loadResources));
   elements["load-users"].addEventListener("click", () => guardedAction(loadAdminData));
   elements["load-tasks"].addEventListener("click", () => guardedAction(loadTasks));
+  elements["load-audits"].addEventListener("click", () => guardedAction(loadAudits));
+  elements["editor-load"].addEventListener("click", () => guardedAction(loadEditorContent));
+  elements["editor-format"].addEventListener("click", formatEditorJson);
+  elements["editor-form"].addEventListener("submit", handleEditorSave);
   elements["template-filter-form"].addEventListener("submit", (event) => {
     event.preventDefault();
     guardedAction(loadTemplates);
@@ -176,7 +196,12 @@ function refreshSessionUI() {
   elements["workspace-grid"].classList.toggle("is-locked", !isLoggedIn);
   setFormDisabled(elements["template-version-form"], !isLoggedIn || !hasPermission("templates:write"));
   setFormDisabled(elements["user-form"], !isLoggedIn || !hasPermission("users:manage"));
+  setFormDisabled(elements["editor-form"], !isLoggedIn || !hasPermission("content:edit"));
   elements["load-users"].disabled = !isLoggedIn || !hasPermission("users:manage");
+  elements["load-audits"].disabled = !isLoggedIn || !hasPermission("logs:read");
+  elements["editor-load"].disabled = !isLoggedIn;
+  elements["editor-format"].disabled = !isLoggedIn;
+  elements["editor-save"].disabled = !isLoggedIn || !hasPermission("content:edit");
   elements["user-panel-note"].textContent = !isLoggedIn
     ? "登录后可查看当前角色是否具备管理员能力。"
     : hasPermission("users:manage")
@@ -305,18 +330,24 @@ function handleLogout(options = {}) {
   state.tasks = [];
   state.roles = [];
   state.users = [];
+  state.audits = [];
+  state.activeContent = null;
   state.activeTemplateDetail = null;
   renderTemplates();
   renderResources();
   renderTasks();
   renderTemplateVersionList();
   renderUsers();
+  renderAudits();
   fillTemplateOptions();
   fillCoursewarePlanOptions();
   fillTemplateVersionOptions();
   fillUserRoleOptions();
   elements["preview-frame"].srcdoc = "";
   elements["preview-title"].textContent = "选择一个成功任务后查看预览";
+  elements["editor-content"].value = "";
+  elements["editor-target-id"].value = "";
+  elements["editor-note"].textContent = "点击任务卡的“编辑”自动载入内容";
   refreshSessionUI();
   if (!options.silent) {
     toast("已退出登录。", "info");
@@ -333,6 +364,12 @@ async function loadDashboard() {
     state.users = [];
     fillUserRoleOptions();
     renderUsers();
+  }
+  if (hasPermission("logs:read")) {
+    jobs.push(loadAudits());
+  } else {
+    state.audits = [];
+    renderAudits();
   }
   await Promise.all(jobs);
   await ensureTemplateVersionDetail();
@@ -361,6 +398,17 @@ async function loadAdminData() {
   state.users = users.list || [];
   fillUserRoleOptions();
   renderUsers();
+}
+
+async function loadAudits() {
+  if (!hasPermission("logs:read")) {
+    state.audits = [];
+    renderAudits();
+    return;
+  }
+  const data = await api("/api/v1/audit-logs?size=30");
+  state.audits = data.list || [];
+  renderAudits();
 }
 
 async function loadTemplates() {
@@ -596,6 +644,36 @@ function renderUsers() {
     .join("");
 }
 
+function renderAudits() {
+  if (!hasPermission("logs:read")) {
+    elements["audit-list"].innerHTML = `<div class="empty-state">当前角色无审计日志查看权限。</div>`;
+    return;
+  }
+  if (!state.audits.length) {
+    elements["audit-list"].innerHTML = `<div class="empty-state">暂无审计日志，完成登录、上传、生成或导出后会出现在这里。</div>`;
+    return;
+  }
+  elements["audit-list"].innerHTML = state.audits
+    .map(
+      (item) => `
+        <article class="audit-card">
+          <h4>${escapeHtml(item.action)}</h4>
+          <div class="audit-meta">
+            <span class="chip">${escapeHtml(item.resultStatus)}</span>
+            <span class="chip">${escapeHtml(item.targetType)}</span>
+            <span class="chip">${escapeHtml(item.username || `User ${item.userId || "-"}`)}</span>
+          </div>
+          <div class="audit-body">
+            <div>对象：${escapeHtml(item.targetId || "-")}</div>
+            <div>详情：${escapeHtml(item.detail || "无补充说明")}</div>
+            <div>时间：${escapeHtml(item.createdAt || "")}</div>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+}
+
 function fillUserRoleOptions() {
   elements["user-role"].innerHTML = state.roles.length
     ? state.roles
@@ -638,6 +716,18 @@ function renderTaskCard(task) {
     task.status === "SUCCESS" && result.targetId
       ? `<button class="text-button" data-task-action="validate" data-task-id="${task.taskId}" type="button">校验</button>`
       : "";
+  const editButton =
+    task.status === "SUCCESS" && result.targetId
+      ? `<button class="text-button" data-task-action="edit" data-task-id="${task.taskId}" type="button">编辑</button>`
+      : "";
+  const cancelButton =
+    !TERMINAL_STATUSES.has(task.status)
+      ? `<button class="text-button" data-task-action="cancel" data-task-id="${task.taskId}" type="button">取消</button>`
+      : "";
+  const retryButton =
+    task.status === "FAILED" || task.status === "CANCELED"
+      ? `<button class="text-button" data-task-action="retry" data-task-id="${task.taskId}" type="button">重试</button>`
+      : "";
   const exportButtons =
     task.status === "SUCCESS" && result.targetId
       ? availableExports(task)
@@ -664,7 +754,7 @@ function renderTaskCard(task) {
         ${warnings}
         ${task.errorMessage ? `<div>失败原因：${escapeHtml(task.errorMessage)}</div>` : ""}
       </div>
-      <div class="task-actions">${previewButton}${validateButton}${exportButtons}</div>
+      <div class="task-actions">${previewButton}${editButton}${validateButton}${cancelButton}${retryButton}${exportButtons}</div>
     </article>
   `;
 }
@@ -909,6 +999,18 @@ async function handleTaskActions(event) {
     await runValidation(task);
     return;
   }
+  if (button.dataset.taskAction === "edit") {
+    await loadTaskIntoEditor(task);
+    return;
+  }
+  if (button.dataset.taskAction === "cancel") {
+    await cancelTask(task);
+    return;
+  }
+  if (button.dataset.taskAction === "retry") {
+    await retryTask(task);
+    return;
+  }
   if (button.dataset.taskAction === "export") {
     await runExport(task, button.dataset.format);
   }
@@ -920,6 +1022,91 @@ async function openTaskPreview(task) {
   elements["preview-frame"].srcdoc = html;
   elements["preview-title"].textContent = `${task.result.targetType} · ${task.result.targetId}`;
   toast("预览内容已加载。", "info");
+}
+
+async function loadTaskIntoEditor(task) {
+  if (!task.result?.targetId || !task.result?.targetType) {
+    toast("该任务还没有可编辑的结果对象。", "warn");
+    return;
+  }
+  elements["editor-target-type"].value = task.result.targetType;
+  elements["editor-target-id"].value = task.result.targetId;
+  await loadEditorContent();
+}
+
+async function loadEditorContent() {
+  const targetType = elements["editor-target-type"].value;
+  const targetId = elements["editor-target-id"].value.trim();
+  if (!targetId) {
+    toast("请先填写结果对象 ID，或点击任务卡的“编辑”。", "warn");
+    return;
+  }
+  const data = await api(`/api/v1/content/${targetType}/${encodeURIComponent(targetId)}`);
+  state.activeContent = data;
+  elements["editor-content"].value = JSON.stringify(data.content, null, 2);
+  elements["editor-note"].textContent = `${data.targetType} · ${data.targetId} 已载入，可编辑后保存`;
+}
+
+function formatEditorJson() {
+  try {
+    const parsed = JSON.parse(elements["editor-content"].value || "{}");
+    elements["editor-content"].value = JSON.stringify(parsed, null, 2);
+    toast("JSON 已格式化。", "info");
+  } catch (error) {
+    toast(`JSON 格式不正确：${error.message}`, "error");
+  }
+}
+
+async function handleEditorSave(event) {
+  event.preventDefault();
+  const targetType = elements["editor-target-type"].value;
+  const targetId = elements["editor-target-id"].value.trim();
+  if (!targetId) {
+    toast("请先填写结果对象 ID。", "warn");
+    return;
+  }
+  let content;
+  try {
+    content = JSON.parse(elements["editor-content"].value || "{}");
+  } catch (error) {
+    toast(`JSON 格式不正确：${error.message}`, "error");
+    return;
+  }
+  const button = elements["editor-save"];
+  setButtonBusy(button, true, "保存中...");
+  try {
+    const data = await api(`/api/v1/content/${targetType}/${encodeURIComponent(targetId)}`, {
+      method: "PATCH",
+      json: { content },
+    });
+    state.activeContent = data;
+    elements["editor-content"].value = JSON.stringify(data.content, null, 2);
+    elements["editor-note"].textContent = `${data.targetType} · ${data.targetId} 已保存并重新生成`;
+    toast("内容已保存，预览与导出文件已重新生成。", "success");
+    await loadTasks();
+    const task = state.tasks.find((item) => item.result?.targetId === data.targetId);
+    if (task) await openTaskPreview(task);
+    if (hasPermission("logs:read")) {
+      await loadAudits();
+    }
+  } catch (error) {
+    handleError(error);
+  } finally {
+    setButtonBusy(button, false, "保存并重新生成");
+  }
+}
+
+async function cancelTask(task) {
+  const updated = await api(`/api/v1/tasks/${task.taskId}/cancel`, { method: "POST" });
+  mergeTask(updated);
+  toast(`任务 ${task.taskId} 已取消。`, "warn");
+}
+
+async function retryTask(task) {
+  const updated = await api(`/api/v1/tasks/${task.taskId}/retry`, { method: "POST" });
+  mergeTask(updated);
+  toast(`任务 ${task.taskId} 已重新入队。`, "success");
+  schedulePolling();
 }
 
 async function runValidation(task) {
@@ -940,8 +1127,9 @@ async function runExport(task, format) {
     json: {
       targetId: task.result.targetId,
       format,
-      expiryDays: 7,
-      shareScope: "private",
+      expiryDays: Number(elements["export-expiry-days"].value || 7),
+      shareScope: elements["export-share-scope"].value,
+      maxDownloads: Number(elements["export-max-downloads"].value || 0),
     },
   });
   await downloadWithAuth(result.downloadUrl, formatFileName(task, result.actualFormat));

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import threading
 from contextlib import suppress
 
@@ -18,8 +19,15 @@ CLIENTS_LOCK = threading.Lock()
 
 
 def progress_socket_settings(app):
+    reloader_parent = (
+        os.getenv("WATER_USE_WERKZEUG_RELOADER") == "1"
+        and os.getenv("WERKZEUG_RUN_MAIN") != "true"
+    )
     return {
-        "enabled": bool(websockets) and app.config.get("START_PROGRESS_SOCKET", True) and not app.config.get("TESTING"),
+        "enabled": bool(websockets)
+        and app.config.get("START_PROGRESS_SOCKET", True)
+        and not app.config.get("TESTING")
+        and not reloader_parent,
         "host": app.config.get("PROGRESS_SOCKET_HOST", "127.0.0.1"),
         "port": int(app.config.get("PROGRESS_SOCKET_PORT", 8765)),
     }

@@ -28,6 +28,8 @@ pip install -r backend\requirements.txt
 python backend\run.py
 ```
 
+如果从 VS Code 运行，请选择 `backend/run.py` 作为启动文件，不要直接运行 `backend/app/services.py`。
+
 打开：
 
 ```text

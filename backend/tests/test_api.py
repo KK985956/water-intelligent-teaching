@@ -77,6 +77,21 @@ class BackendFlowTestCase(unittest.TestCase):
         )
         self.assertEqual(validation.status_code, 200)
 
+        content_response = self.client.get(f"/api/v1/content/PLAN/{plan_id}", headers=self.auth_headers())
+        self.assertEqual(content_response.status_code, 200)
+        content = content_response.get_json()["data"]["content"]
+        content["summary"] = "人工编辑后的课堂总结"
+        edit_response = self.client.patch(
+            f"/api/v1/content/PLAN/{plan_id}",
+            headers=self.auth_headers(),
+            json={"content": content},
+        )
+        self.assertEqual(edit_response.status_code, 200)
+        edited_preview = self.client.get(edit_response.get_json()["data"]["previewUrl"], headers=self.auth_headers())
+        self.assertEqual(edited_preview.status_code, 200)
+        self.assertIn("人工编辑后的课堂总结", edited_preview.get_data(as_text=True))
+        edited_preview.close()
+
         create_courseware = self.client.post(
             "/api/v1/generation/coursewares",
             headers=self.auth_headers(),
@@ -90,6 +105,21 @@ class BackendFlowTestCase(unittest.TestCase):
         courseware_task = create_courseware.get_json()["data"]
         self.assertEqual(courseware_task["status"], "SUCCESS")
         courseware_id = courseware_task["result"]["targetId"]
+
+        courseware_content = self.client.get(f"/api/v1/content/COURSEWARE/{courseware_id}", headers=self.auth_headers())
+        self.assertEqual(courseware_content.status_code, 200)
+        courseware_payload = courseware_content.get_json()["data"]["content"]
+        courseware_payload["slides"][0]["bullets"].append("人工补充的课件要点")
+        courseware_edit = self.client.patch(
+            f"/api/v1/content/COURSEWARE/{courseware_id}",
+            headers=self.auth_headers(),
+            json={"content": courseware_payload},
+        )
+        self.assertEqual(courseware_edit.status_code, 200)
+        courseware_preview = self.client.get(courseware_edit.get_json()["data"]["previewUrl"], headers=self.auth_headers())
+        self.assertEqual(courseware_preview.status_code, 200)
+        self.assertIn("人工补充的课件要点", courseware_preview.get_data(as_text=True))
+        courseware_preview.close()
 
         export_response = self.client.post(
             "/api/v1/exports",
@@ -108,6 +138,19 @@ class BackendFlowTestCase(unittest.TestCase):
             json={"targetId": courseware_id, "format": "html", "expiryDays": 3, "shareScope": "public"},
         )
         self.assertEqual(export_html.status_code, 200)
+
+        limited_share = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": plan_id, "format": "html", "expiryDays": 3, "shareScope": "public", "maxDownloads": 1},
+        )
+        self.assertEqual(limited_share.status_code, 200)
+        share_url = limited_share.get_json()["data"]["shareUrl"]
+        first_share = self.client.get(share_url)
+        self.assertEqual(first_share.status_code, 200)
+        first_share.close()
+        second_share = self.client.get(share_url)
+        self.assertEqual(second_share.status_code, 410)
 
     def test_frontend_entry_and_readonly_lists(self):
         index = self.client.get("/")
@@ -225,6 +268,11 @@ class BackendFlowTestCase(unittest.TestCase):
         self.assertEqual(update_user.status_code, 200)
         self.assertEqual(update_user.get_json()["data"]["dept"], "教学研究室")
         self.assertEqual(update_user.get_json()["data"]["status"], 0)
+
+        audit_logs = self.client.get("/api/v1/audit-logs?size=10", headers=admin_headers)
+        self.assertEqual(audit_logs.status_code, 200)
+        audit_items = audit_logs.get_json()["data"]["list"]
+        self.assertTrue(any(item["action"] == "USER_UPDATE" for item in audit_items))
 
 
 if __name__ == "__main__":

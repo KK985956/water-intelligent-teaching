@@ -47,6 +47,8 @@ ROLE_SEEDS = [
             "exports:write",
             "resources:write",
             "users:manage",
+            "logs:read",
+            "content:edit",
         ],
     },
     {
@@ -61,6 +63,7 @@ ROLE_SEEDS = [
             "resources:read",
             "exports:write",
             "resources:write",
+            "content:edit",
         ],
     },
     {
@@ -224,6 +227,52 @@ def user_has_permission(role_code, permission):
     return permission in role_permissions(role_code)
 
 
+def _can_manage_all(user_row):
+    return bool(user_row and user_has_permission(user_row["role_code"], "users:manage"))
+
+
+def _ensure_task_access(task_row, user_row):
+    if not task_row or not user_row:
+        return
+    if int(task_row["user_id"]) == int(user_row["user_id"]) or _can_manage_all(user_row):
+        return
+    raise ServiceError(1002, "当前用户无权访问该任务", 403)
+
+
+def _task_user_for_target(target_type, target_id):
+    normalized_type = normalize_target_type(target_type)
+    if normalized_type == "PLAN":
+        return fetch_one(
+            """
+            SELECT gt.user_id
+            FROM t_teaching_plan tp
+            JOIN t_generation_task gt ON gt.task_id = tp.task_id
+            WHERE tp.plan_id = ?
+            """,
+            (target_id,),
+        )
+    return fetch_one(
+        """
+        SELECT gt.user_id
+        FROM t_courseware cw
+        JOIN t_generation_task gt ON gt.task_id = cw.task_id
+        WHERE cw.courseware_id = ?
+        """,
+        (target_id,),
+    )
+
+
+def _ensure_target_access(target_type, target_id, user_row):
+    if not user_row:
+        return
+    owner = _task_user_for_target(target_type, target_id)
+    if not owner:
+        raise ServiceError(2003, "目标内容不存在", 404)
+    if int(owner["user_id"]) == int(user_row["user_id"]) or _can_manage_all(user_row):
+        return
+    raise ServiceError(1002, "当前用户无权访问该内容", 403)
+
+
 def get_user_by_id(user_id):
     return fetch_one("SELECT * FROM t_user WHERE user_id = ?", (user_id,))
 
@@ -340,6 +389,42 @@ def _serialize_resource(row):
         "filePath": row["file_path"],
         "checksum": row["checksum"],
         "uploaderId": row["uploader_id"],
+        "createdAt": row["created_at"],
+    }
+
+
+def _serialize_audit(row):
+    if not row:
+        return None
+    return {
+        "logId": row["log_id"],
+        "userId": row["user_id"],
+        "username": row.get("username") or "",
+        "action": row["action"],
+        "targetType": row["target_type"],
+        "targetId": row["target_id"],
+        "ipAddr": row["ip_addr"] or "",
+        "resultStatus": row["result_status"],
+        "detail": row["detail"] or "",
+        "createdAt": row["created_at"],
+    }
+
+
+def _serialize_export(row):
+    if not row:
+        return None
+    return {
+        "exportId": row["export_id"],
+        "targetId": row["target_id"],
+        "targetType": row["target_type"],
+        "format": row["format"],
+        "actualFormat": row["actual_format"],
+        "shareUrl": row["share_url"],
+        "shareScope": row.get("share_scope") or "private",
+        "maxDownloads": row.get("max_downloads") or 0,
+        "downloadCount": row["download_count"],
+        "expiryTime": row["expiry_time"],
+        "creatorId": row.get("creator_id"),
         "createdAt": row["created_at"],
     }
 
@@ -647,6 +732,48 @@ def list_users(keyword=None, role_code=None, status=None, page=1, size=20):
     )
     return {
         "list": [_serialize_user(row) for row in rows],
+        "total": total_row["total"],
+        "pageInfo": {"page": page, "size": size},
+    }
+
+
+def list_audit_logs(keyword=None, action=None, page=1, size=20):
+    page = max(1, int(page or 1))
+    size = max(1, min(int(size or 20), 100))
+    conditions = ["1 = 1"]
+    params = []
+    if action:
+        conditions.append("l.action = ?")
+        params.append(str(action).strip().upper())
+    if keyword:
+        text = str(keyword).strip()
+        conditions.append("(l.action LIKE ? OR l.target_id LIKE ? OR l.detail LIKE ? OR u.username LIKE ?)")
+        params.extend([f"%{text}%", f"%{text}%", f"%{text}%", f"%{text}%"])
+
+    where_clause = " AND ".join(conditions)
+    total_row = fetch_one(
+        f"""
+        SELECT COUNT(*) AS total
+        FROM t_audit_log l
+        LEFT JOIN t_user u ON u.user_id = l.user_id
+        WHERE {where_clause}
+        """,
+        tuple(params),
+    )
+    params.extend([size, (page - 1) * size])
+    rows = fetch_all(
+        f"""
+        SELECT l.*, u.username
+        FROM t_audit_log l
+        LEFT JOIN t_user u ON u.user_id = l.user_id
+        WHERE {where_clause}
+        ORDER BY l.created_at DESC, l.log_id DESC
+        LIMIT ? OFFSET ?
+        """,
+        tuple(params),
+    )
+    return {
+        "list": [_serialize_audit(row) for row in rows],
         "total": total_row["total"],
         "pageInfo": {"page": page, "size": size},
     }
@@ -1021,6 +1148,8 @@ def _validate_courseware_payload(payload):
 
 def create_courseware_task(user_id, payload):
     plan, template = _validate_courseware_payload(payload)
+    user_row = get_user_by_id(user_id)
+    _ensure_target_access("PLAN", plan["plan_id"], user_row)
     resource_ids = payload.get("resources", []) if isinstance(payload.get("resources", []), list) else []
     params = {
         "planId": plan["plan_id"],
@@ -1042,14 +1171,58 @@ def create_courseware_task(user_id, payload):
     return get_task(task_id)
 
 
-def get_task(task_id):
+def get_task(task_id, user_row=None):
     task = fetch_one("SELECT * FROM t_generation_task WHERE task_id = ?", (task_id,))
     if not task:
         raise ServiceError(2002, "任务不存在", 404)
+    _ensure_task_access(task, user_row)
     return _serialize_task(task)
 
 
+def _is_task_canceled(task_id):
+    row = fetch_one("SELECT status FROM t_generation_task WHERE task_id = ?", (task_id,))
+    return bool(row and row["status"] == "CANCELED")
+
+
+def cancel_task(task_id, user_row):
+    task = fetch_one("SELECT * FROM t_generation_task WHERE task_id = ?", (task_id,))
+    if not task:
+        raise ServiceError(2002, "任务不存在", 404)
+    _ensure_task_access(task, user_row)
+    if task["status"] in {"SUCCESS", "FAILED", "CANCELED"}:
+        return _serialize_task(task)
+    _update_task(task_id, "CANCELED", 100, error_message="用户主动取消任务")
+    record_audit(user_row["user_id"], "TASK_CANCEL", task["task_type"], task_id, "SUCCESS", "取消异步生成任务")
+    return get_task(task_id, user_row)
+
+
+def retry_task(task_id, user_row):
+    task = fetch_one("SELECT * FROM t_generation_task WHERE task_id = ?", (task_id,))
+    if not task:
+        raise ServiceError(2002, "任务不存在", 404)
+    _ensure_task_access(task, user_row)
+    if task["status"] not in {"FAILED", "CANCELED"}:
+        raise ServiceError(1000, "只有失败或已取消的任务可以重试", 400)
+    retry_count = int(task["retry_count"] or 0) + 1
+    if retry_count > 3:
+        raise ServiceError(5000, "任务重试次数已超过上限，请人工检查模板或参数", 400)
+    execute(
+        """
+        UPDATE t_generation_task
+        SET status = 'CREATED', progress = 0, result_path = '', result_meta_json = '{}',
+            error_message = '', retry_count = ?, updated_at = ?
+        WHERE task_id = ?
+        """,
+        (retry_count, now_text(), task_id),
+    )
+    record_audit(user_row["user_id"], "TASK_RETRY", task["task_type"], task_id, "SUCCESS", f"第 {retry_count} 次重试任务")
+    _dispatch_task(task_id)
+    return get_task(task_id, user_row)
+
+
 def _update_task(task_id, status, progress, result_path=None, result_meta=None, error_message=None):
+    if status != "CANCELED" and _is_task_canceled(task_id):
+        return
     execute(
         """
         UPDATE t_generation_task
@@ -1307,22 +1480,290 @@ def _build_courseware_result(task):
     return result_meta, str(presentation_path or json_path)
 
 
+def _latest_validation(target_id, target_type):
+    row = fetch_one(
+        """
+        SELECT * FROM t_validation_result
+        WHERE target_id = ? AND target_type = ?
+        ORDER BY result_id DESC
+        LIMIT 1
+        """,
+        (target_id, target_type),
+    )
+    return _serialize_validation(row)
+
+
+def get_generated_content(target_id, target_type, user_row):
+    normalized_type = normalize_target_type(target_type)
+    _ensure_target_access(normalized_type, target_id, user_row)
+    if normalized_type == "PLAN":
+        row = fetch_one("SELECT * FROM t_teaching_plan WHERE plan_id = ?", (target_id,))
+        if not row:
+            raise ServiceError(2003, "教学方案不存在", 404)
+        content = json_loads(row["content_json"], {})
+        return {
+            "targetId": target_id,
+            "targetType": normalized_type,
+            "content": content,
+            "previewUrl": f"/api/v1/previews/plan/{target_id}",
+            "validation": _latest_validation(target_id, normalized_type),
+            "updatedFrom": row["file_path"],
+        }
+
+    row = fetch_one("SELECT * FROM t_courseware WHERE courseware_id = ?", (target_id,))
+    if not row:
+        raise ServiceError(2003, "教学课件不存在", 404)
+    content = json_loads(row["content_json"], {})
+    return {
+        "targetId": target_id,
+        "targetType": normalized_type,
+        "content": content,
+        "previewUrl": f"/api/v1/previews/courseware/{target_id}",
+        "validation": _latest_validation(target_id, normalized_type),
+        "updatedFrom": row["file_path"],
+    }
+
+
+def _load_task_template(task_id):
+    task = fetch_one("SELECT * FROM t_generation_task WHERE task_id = ?", (task_id,))
+    if not task:
+        raise ServiceError(2002, "任务不存在", 404)
+    template_row = fetch_one("SELECT * FROM t_template WHERE template_id = ?", (task["template_id"],))
+    if not template_row:
+        raise ServiceError(2002, "模板不存在或已下线", 404)
+    return task, _serialize_template(template_row)
+
+
+def _refresh_task_result(task_id, result_path, result_meta):
+    task_row = fetch_one("SELECT * FROM t_generation_task WHERE task_id = ?", (task_id,))
+    if not task_row:
+        return
+    current_meta = json_loads(task_row["result_meta_json"], {})
+    current_meta.update(result_meta)
+    execute(
+        """
+        UPDATE t_generation_task
+        SET result_path = ?, result_meta_json = ?, updated_at = ?
+        WHERE task_id = ?
+        """,
+        (str(result_path), json_dumps(current_meta), now_text(), task_id),
+    )
+    updated_task = fetch_one("SELECT * FROM t_generation_task WHERE task_id = ?", (task_id,))
+    if updated_task:
+        notify_user(
+            updated_task["user_id"],
+            {
+                "type": "task.updated",
+                "task": _serialize_task(updated_task),
+                "eventAt": now_text(),
+            },
+        )
+
+
+def _require_content_object(payload):
+    content = payload.get("content", payload)
+    if not isinstance(content, dict):
+        raise ServiceError(1000, "content 必须是 JSON 对象", 400)
+    return content
+
+
+def _normalize_text_list(value):
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        normalized = value.replace("；", ";").replace("\r", "\n").replace("\n", ";")
+        return [item.strip() for item in normalized.split(";") if item.strip()]
+    return []
+
+
+def update_generated_content(target_id, target_type, payload, user_row):
+    normalized_type = normalize_target_type(target_type)
+    _ensure_target_access(normalized_type, target_id, user_row)
+    if normalized_type == "PLAN":
+        return _update_plan_content(target_id, payload, user_row)
+    return _update_courseware_content(target_id, payload, user_row)
+
+
+def _update_plan_content(plan_id, payload, user_row):
+    row = fetch_one("SELECT * FROM t_teaching_plan WHERE plan_id = ?", (plan_id,))
+    if not row:
+        raise ServiceError(2003, "教学方案不存在", 404)
+    incoming = _require_content_object(payload)
+    plan = json_loads(row["content_json"], {})
+    plan.update(incoming)
+
+    for key in ("goals", "focus_points", "difficult_points", "cases", "exercises", "homework", "resources", "formulas"):
+        plan[key] = _normalize_text_list(plan.get(key))
+    if not plan.get("course_name"):
+        raise ServiceError(1000, "course_name 不能为空", 400)
+    if not plan.get("audience"):
+        raise ServiceError(1000, "audience 不能为空", 400)
+    try:
+        plan["hours"] = int(plan.get("hours") or 1)
+    except (TypeError, ValueError) as exc:
+        raise ServiceError(1000, "hours 必须为整数", 400) from exc
+    plan["outline"] = plan.get("outline") if isinstance(plan.get("outline"), list) else []
+    for index, item in enumerate(plan["outline"]):
+        if not isinstance(item, dict):
+            raise ServiceError(1000, f"outline[{index}] 必须是对象", 400)
+        item["title"] = str(item.get("title", "")).strip()
+        item["duration"] = str(item.get("duration", "")).strip()
+        item["content"] = str(item.get("content", "")).strip()
+        item["method"] = str(item.get("method", "")).strip()
+        item["knowledge_points"] = _normalize_text_list(item.get("knowledge_points"))
+
+    task, template_meta = _load_task_template(row["task_id"])
+    template_suffix = Path(template_meta["filePath"]).suffix.lower()
+    template_body = extract_template_text(template_meta["filePath"]) if template_suffix in {".md", ".txt"} else ""
+    result_dir = _ensure_result_dir(task["task_id"])
+    markdown_path = result_dir / "plan.md"
+    preview_path = result_dir / "plan_preview.html"
+    json_path = result_dir / "plan.json"
+    _write_text(markdown_path, render_plan_markdown(plan, template_body))
+    _write_text(preview_path, render_plan_html(plan))
+    _write_text(json_path, json_dumps(plan))
+    docx_path, template_warning = _build_plan_docx(template_meta, plan, result_dir)
+
+    validation = validate_plan(plan, template_meta["formatRules"])
+    execute(
+        """
+        UPDATE t_teaching_plan
+        SET course_name = ?, course_type = ?, outline_json = ?, goals_text = ?, key_points = ?,
+            validate_status = ?, file_path = ?, preview_path = ?, content_json = ?
+        WHERE plan_id = ?
+        """,
+        (
+            plan["course_name"],
+            plan.get("course_type") or row["course_type"],
+            json_dumps(plan["outline"]),
+            "\n".join(plan["goals"]),
+            "；".join(plan["focus_points"]),
+            validation["status"],
+            str(docx_path),
+            str(preview_path),
+            json_dumps(plan),
+            plan_id,
+        ),
+    )
+    _create_validation_record(plan_id, "PLAN", validation)
+    result_meta = {
+        "targetType": "PLAN",
+        "targetId": plan_id,
+        "previewUrl": f"/api/v1/previews/plan/{plan_id}",
+        "downloadHint": str(docx_path),
+        "score": validation["score"],
+        "validationStatus": validation["status"],
+        "files": {
+            "markdown": str(markdown_path),
+            "html": str(preview_path),
+            "json": str(json_path),
+            "docx": str(docx_path),
+        },
+    }
+    if template_warning:
+        result_meta["warnings"] = [template_warning]
+    _refresh_task_result(row["task_id"], docx_path, result_meta)
+    record_audit(user_row["user_id"], "CONTENT_EDIT", "PLAN", plan_id, "SUCCESS", "人工编辑教学方案并重新生成预览")
+    return get_generated_content(plan_id, "PLAN", user_row)
+
+
+def _update_courseware_content(courseware_id, payload, user_row):
+    row = fetch_one("SELECT * FROM t_courseware WHERE courseware_id = ?", (courseware_id,))
+    if not row:
+        raise ServiceError(2003, "教学课件不存在", 404)
+    incoming = _require_content_object(payload)
+    courseware = json_loads(row["content_json"], {})
+    courseware.update(incoming)
+    slides = courseware.get("slides")
+    if not isinstance(slides, list) or not slides:
+        raise ServiceError(1000, "slides 不能为空", 400)
+    for index, slide in enumerate(slides):
+        if not isinstance(slide, dict):
+            raise ServiceError(1000, f"slides[{index}] 必须是对象", 400)
+        slide["title"] = str(slide.get("title", "")).strip()
+        slide["bullets"] = _normalize_text_list(slide.get("bullets"))
+    courseware["slide_count"] = len(slides)
+
+    task, template_meta = _load_task_template(row["task_id"])
+    result_dir = _ensure_result_dir(task["task_id"])
+    preview_path = result_dir / "courseware_preview.html"
+    json_path = result_dir / "courseware.json"
+    outline_path = result_dir / "courseware_outline.txt"
+    _write_text(preview_path, render_courseware_html(courseware))
+    _write_text(json_path, json_dumps(courseware))
+    _write_text(outline_path, "\n".join(courseware_lines(courseware)))
+    presentation_path, presentation_warning = _build_courseware_presentation(template_meta, courseware, result_dir)
+
+    validation = validate_courseware(courseware, template_meta["formatRules"])
+    execute(
+        """
+        UPDATE t_courseware
+        SET slide_count = ?, theme_name = ?, file_path = ?, preview_path = ?, validate_status = ?,
+            slides_json = ?, content_json = ?
+        WHERE courseware_id = ?
+        """,
+        (
+            courseware["slide_count"],
+            courseware.get("theme_name") or row["theme_name"],
+            str(presentation_path or json_path),
+            str(preview_path),
+            validation["status"],
+            json_dumps(slides),
+            json_dumps(courseware),
+            courseware_id,
+        ),
+    )
+    _create_validation_record(courseware_id, "COURSEWARE", validation)
+    result_meta = {
+        "targetType": "COURSEWARE",
+        "targetId": courseware_id,
+        "previewUrl": f"/api/v1/previews/courseware/{courseware_id}",
+        "downloadHint": str(json_path),
+        "slideCount": courseware["slide_count"],
+        "score": validation["score"],
+        "validationStatus": validation["status"],
+        "files": {
+            "html": str(preview_path),
+            "json": str(json_path),
+            "outline": str(outline_path),
+            "pptx": str(presentation_path) if presentation_path else "",
+        },
+    }
+    if presentation_warning:
+        result_meta["warnings"] = [presentation_warning]
+    _refresh_task_result(row["task_id"], presentation_path or json_path, result_meta)
+    record_audit(user_row["user_id"], "CONTENT_EDIT", "COURSEWARE", courseware_id, "SUCCESS", "人工编辑教学课件并重新生成预览")
+    return get_generated_content(courseware_id, "COURSEWARE", user_row)
+
+
 def process_task(task_id):
     task = fetch_one("SELECT * FROM t_generation_task WHERE task_id = ?", (task_id,))
     if not task:
         return
+    if task["status"] == "CANCELED":
+        return
 
     try:
         _update_task(task_id, "RUNNING", 10)
+        if _is_task_canceled(task_id):
+            return
         _update_task(task_id, "GENERATING", 40)
+        if _is_task_canceled(task_id):
+            return
         if task["task_type"] == "PLAN":
             _update_task(task_id, "VALIDATING", 70)
+            if _is_task_canceled(task_id):
+                return
             result_meta, result_path = _build_plan_result(task)
         elif task["task_type"] == "COURSEWARE":
             _update_task(task_id, "VALIDATING", 70)
+            if _is_task_canceled(task_id):
+                return
             result_meta, result_path = _build_courseware_result(task)
         else:
             raise ServiceError(5000, "未知任务类型", 500)
+        if _is_task_canceled(task_id):
+            return
         _update_task(task_id, "SUCCESS", 100, result_path=result_path, result_meta=result_meta)
     except ServiceError as exc:
         _update_task(task_id, "FAILED", 100, error_message=exc.message)
@@ -1330,8 +1771,9 @@ def process_task(task_id):
         _update_task(task_id, "FAILED", 100, error_message=str(exc))
 
 
-def validate_target(target_id, target_type):
+def validate_target(target_id, target_type, user_row=None):
     normalized_type = normalize_target_type(target_type)
+    _ensure_target_access(normalized_type, target_id, user_row)
     if normalized_type == "PLAN":
         row = fetch_one("SELECT * FROM t_teaching_plan WHERE plan_id = ?", (target_id,))
         if not row:
@@ -1483,10 +1925,19 @@ def _export_courseware(courseware_row, requested_format):
     raise ServiceError(4001, "当前课件暂不支持该导出格式", 400)
 
 
-def create_export(target_id, requested_format, expiry_days, share_scope, user_id):
+def create_export(target_id, requested_format, expiry_days, share_scope, user_id, max_downloads=0):
+    user_row = get_user_by_id(user_id)
     target_type, row = _detect_target(target_id)
+    _ensure_target_access(target_type, target_id, user_row)
     expiry_days = int(expiry_days or current_app.config["DEFAULT_SHARE_DAYS"])
     expiry_time = datetime.now() + timedelta(days=max(1, expiry_days))
+    normalized_scope = str(share_scope or "private").strip().lower()
+    if normalized_scope not in {"private", "public", "course"}:
+        normalized_scope = "private"
+    try:
+        max_downloads = max(0, int(max_downloads or 0))
+    except (TypeError, ValueError):
+        max_downloads = 0
 
     if target_type == "PLAN":
         file_path, actual_format = _export_plan(row, requested_format)
@@ -1497,8 +1948,8 @@ def create_export(target_id, requested_format, expiry_days, share_scope, user_id
     export_id = execute(
         """
         INSERT INTO t_export_record(target_id, target_type, format, actual_format, file_path, share_token, share_url,
-            expiry_time, download_count, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+            share_scope, max_downloads, expiry_time, download_count, creator_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
         """,
         (
             target_id,
@@ -1508,7 +1959,10 @@ def create_export(target_id, requested_format, expiry_days, share_scope, user_id
             str(file_path),
             share_token,
             f"/share/{share_token}",
+            normalized_scope,
+            max_downloads,
             expiry_time.strftime("%Y-%m-%d %H:%M:%S"),
+            user_id,
             now_text(),
         ),
     )
@@ -1522,15 +1976,18 @@ def create_export(target_id, requested_format, expiry_days, share_scope, user_id
         "downloadUrl": f"/api/v1/exports/{export_id}/download",
         "shareUrl": f"/share/{share_token}",
         "fileSize": Path(file_path).stat().st_size,
-        "shareScope": share_scope,
+        "shareScope": normalized_scope,
+        "maxDownloads": max_downloads,
         "expiryTime": expiry_time.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
 
-def get_export_record(export_id):
+def get_export_record(export_id, user_row=None):
     row = fetch_one("SELECT * FROM t_export_record WHERE export_id = ?", (export_id,))
     if not row:
         raise ServiceError(4001, "导出记录不存在", 404)
+    if user_row and row.get("creator_id") and int(row["creator_id"]) != int(user_row["user_id"]) and not _can_manage_all(user_row):
+        raise ServiceError(1002, "当前用户无权下载该导出文件", 403)
     return row
 
 
@@ -1552,10 +2009,14 @@ def ensure_not_expired(export_row):
     expiry = datetime.strptime(export_row["expiry_time"], "%Y-%m-%d %H:%M:%S")
     if expiry < datetime.now():
         raise ServiceError(4001, "分享链接已过期", 410)
+    max_downloads = int(export_row.get("max_downloads") or 0)
+    if max_downloads and int(export_row["download_count"] or 0) >= max_downloads:
+        raise ServiceError(4001, "分享链接下载次数已用完", 410)
 
 
-def get_preview_file(target_type, target_id):
+def get_preview_file(target_type, target_id, user_row=None):
     normalized_type = normalize_target_type(target_type)
+    _ensure_target_access(normalized_type, target_id, user_row)
     if normalized_type == "PLAN":
         row = fetch_one("SELECT preview_path FROM t_teaching_plan WHERE plan_id = ?", (target_id,))
     else:

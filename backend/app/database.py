@@ -132,8 +132,11 @@ CREATE TABLE IF NOT EXISTS t_export_record (
     file_path TEXT NOT NULL,
     share_token TEXT NOT NULL UNIQUE,
     share_url TEXT NOT NULL,
+    share_scope TEXT NOT NULL DEFAULT 'private',
+    max_downloads INTEGER NOT NULL DEFAULT 0,
     expiry_time TEXT NOT NULL,
     download_count INTEGER NOT NULL DEFAULT 0,
+    creator_id INTEGER,
     created_at TEXT NOT NULL
 );
 
@@ -174,6 +177,10 @@ def _migrate(connection):
     _ensure_column(connection, "t_template_version", "format_rule_json", "TEXT")
     _ensure_column(connection, "t_template_version", "placeholder_json", "TEXT")
     _ensure_column(connection, "t_template_version", "preview_text", "TEXT")
+    _ensure_column(connection, "t_export_record", "share_scope", "TEXT NOT NULL DEFAULT 'private'")
+    _ensure_column(connection, "t_export_record", "max_downloads", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "t_export_record", "creator_id", "INTEGER")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_export_creator ON t_export_record(creator_id, created_at)")
 
 
 def connect():
