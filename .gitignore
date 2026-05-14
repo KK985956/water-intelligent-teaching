@@ -47,6 +47,7 @@ logs/
 .DS_Store
 Thumbs.db
 desktop.ini
+.git_old/
 .idea/
 .vscode/
 
