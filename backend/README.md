@@ -16,12 +16,25 @@
 
 ## 技术取舍
 
-详细设计里给的是 `Spring Boot + Python` 双服务方案。当前仓库没有现成工程，且本机现成依赖以 `Flask` 为主，所以这里先实现了单体 Python 后端，但接口、任务流、模块边界都按详细设计保留，后续可以再拆服务。
+详细设计里的 `Spring Boot + Python` 双服务方案已补充到仓库：`business-service/` 是 Spring Boot 业务服务骨架，`backend/generation_service.py` 是可独立启动的 Python 生成服务。当前 Flask 工作台仍保留为本地演示入口，业务流程可通过 `WATER_GENERATION_SERVICE_URL` 切换为 HTTP 调用生成服务。
+
+数据库层已支持 `WATER_DATABASE_URL`：
+
+- `postgresql://water:water@127.0.0.1:5432/water_teaching`
+- `mysql+pymysql://water:water@127.0.0.1:3306/water_teaching?charset=utf8mb4`
+
+未配置时使用 SQLite 兼容模式，主要用于本地快速演示和自动化测试。
 
 ## 启动
 
 ```powershell
 python backend/run.py
+```
+
+独立启动 Python 生成服务：
+
+```powershell
+python backend/generation_service.py
 ```
 
 如果在 VS Code 里直接点运行，请运行 `backend/run.py`，不要运行 `backend/app/services.py` 这类包内部模块。

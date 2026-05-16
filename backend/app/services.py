@@ -13,10 +13,8 @@ from werkzeug.datastructures import FileStorage
 from .auth import hash_password, issue_token, verify_password
 from .database import execute, fetch_all, fetch_one, init_db
 from .documents import (
-    build_courseware,
     build_courseware_template_context,
     build_docx,
-    build_teaching_plan,
     build_plan_template_context,
     courseware_lines,
     extract_placeholders,
@@ -25,10 +23,14 @@ from .documents import (
     render_plan_html,
     render_plan_markdown,
     teaching_plan_lines,
-    validate_courseware,
-    validate_plan,
 )
 from .errors import ServiceError
+from .generation_client import (
+    generate_courseware,
+    generate_teaching_plan,
+    validate_generated_courseware,
+    validate_generated_plan,
+)
 from .office import docx_to_pdf, fill_ppt_template, fill_word_template, html_to_pdf, pptx_to_pdf, slides_to_pptx
 from .realtime import bootstrap_progress_socket, notify_user, progress_socket_settings
 
@@ -1348,7 +1350,7 @@ def _build_plan_result(task):
 
     template_meta = _serialize_template(template_row)
     params = json_loads(task["params_json"], {})
-    plan = build_teaching_plan(params, template_meta)
+    plan = generate_teaching_plan(params, template_meta)
     template_suffix = Path(template_meta["filePath"]).suffix.lower()
     template_body = extract_template_text(template_meta["filePath"]) if template_suffix in {".md", ".txt"} else ""
     markdown_text = render_plan_markdown(plan, template_body)
@@ -1362,7 +1364,7 @@ def _build_plan_result(task):
     _write_text(json_path, json_dumps(plan))
     docx_path, template_warning = _build_plan_docx(template_meta, plan, result_dir)
 
-    validation = validate_plan(plan, template_meta["formatRules"])
+    validation = validate_generated_plan(plan, template_meta["formatRules"])
     validation_status = validation["status"]
     plan_id = make_id("PLAN")
     execute(
@@ -1425,7 +1427,7 @@ def _build_courseware_result(task):
 
     plan = json_loads(plan_row["content_json"], {})
     template_meta = _serialize_template(template_row)
-    courseware = build_courseware(plan, template_meta, resources)
+    courseware = generate_courseware(plan, template_meta, resources)
 
     result_dir = _ensure_result_dir(task["task_id"])
     preview_path = result_dir / "courseware_preview.html"
@@ -1436,7 +1438,7 @@ def _build_courseware_result(task):
     _write_text(outline_path, "\n".join(courseware_lines(courseware)))
     presentation_path, presentation_warning = _build_courseware_presentation(template_meta, courseware, result_dir)
 
-    validation = validate_courseware(courseware, template_meta["formatRules"])
+    validation = validate_generated_courseware(courseware, template_meta["formatRules"])
     courseware_id = make_id("CW")
     execute(
         """
@@ -1624,7 +1626,7 @@ def _update_plan_content(plan_id, payload, user_row):
     _write_text(json_path, json_dumps(plan))
     docx_path, template_warning = _build_plan_docx(template_meta, plan, result_dir)
 
-    validation = validate_plan(plan, template_meta["formatRules"])
+    validation = validate_generated_plan(plan, template_meta["formatRules"])
     execute(
         """
         UPDATE t_teaching_plan
@@ -1694,7 +1696,7 @@ def _update_courseware_content(courseware_id, payload, user_row):
     _write_text(outline_path, "\n".join(courseware_lines(courseware)))
     presentation_path, presentation_warning = _build_courseware_presentation(template_meta, courseware, result_dir)
 
-    validation = validate_courseware(courseware, template_meta["formatRules"])
+    validation = validate_generated_courseware(courseware, template_meta["formatRules"])
     execute(
         """
         UPDATE t_courseware
@@ -1779,13 +1781,13 @@ def validate_target(target_id, target_type, user_row=None):
         if not row:
             raise ServiceError(2003, "教学方案不存在", 404)
         plan = json_loads(row["content_json"], {})
-        validation = validate_plan(plan, DEFAULT_TEMPLATE_RULES.get(row["course_type"], DEFAULT_TEMPLATE_RULES["THEORY"]))
+        validation = validate_generated_plan(plan, DEFAULT_TEMPLATE_RULES.get(row["course_type"], DEFAULT_TEMPLATE_RULES["THEORY"]))
     else:
         row = fetch_one("SELECT * FROM t_courseware WHERE courseware_id = ?", (target_id,))
         if not row:
             raise ServiceError(2003, "课件不存在", 404)
         courseware = json_loads(row["content_json"], {})
-        validation = validate_courseware(courseware, DEFAULT_TEMPLATE_RULES["TRAINING"])
+        validation = validate_generated_courseware(courseware, DEFAULT_TEMPLATE_RULES["TRAINING"])
 
     _create_validation_record(target_id, normalized_type, validation)
     latest = fetch_one(

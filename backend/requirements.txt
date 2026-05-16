@@ -3,3 +3,5 @@ itsdangerous>=2.1
 Jinja2>=3.0
 Werkzeug>=2.2
 websockets>=15.0
+pymysql>=1.1
+psycopg[binary]>=3.1

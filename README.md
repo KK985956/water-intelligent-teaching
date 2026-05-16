@@ -2,7 +2,7 @@
 
 这是一个面向水利课程教学资料自动生成的 Web 应用原型。项目依据详细设计报告中的“用户层、应用层、业务层、数据层、资源层”分层思想实现，围绕模板管理、教学方案生成、课件生成、资源管理、格式校验、人工编辑、导出分享、用户权限、审计日志和 WebSocket 任务进度推送构建完整演示闭环。
 
-> 当前工程采用 `Flask + SQLite + 原生 Web 前端` 的轻量实现方式。详细设计报告中提出的 `Spring Boot + Python 服务` 可作为后续工程化拆分方向；本仓库优先保证课程实训场景下能本地运行、能演示、能测试、能持续迭代。
+> 当前工程已补充 `Spring Boot 业务服务 + Python 生成服务` 的拆分骨架，并在 Python 后端数据层支持通过 `WATER_DATABASE_URL` 接入 MySQL/PostgreSQL。课程实训场景仍可使用 Flask 工作台一键演示，便于本地运行、测试和持续迭代。
 
 ## 一、功能概览
 
@@ -23,14 +23,24 @@
 
 ```text
 .
-├── backend/                     # Flask 后端、前端静态工作台和运行入口
+├── business-service/            # Spring Boot 业务服务骨架，负责业务 API、数据库配置和生成服务调用
+│   ├── pom.xml                  # Maven 工程配置，包含 Web、Validation、JDBC、MySQL、PostgreSQL 依赖
+│   └── src/main/
+│       ├── java/com/water/teaching/
+│       │   ├── WaterBusinessServiceApplication.java
+│       │   ├── client/          # Python 生成服务 HTTP 客户端
+│       │   ├── config/          # 生成服务配置
+│       │   └── web/             # 健康检查和生成/校验代理接口
+│       └── resources/application.yml
+├── backend/                     # Flask 工作台、Python 生成服务和本地运行入口
 │   ├── app/                     # 后端核心应用包
 │   │   ├── __init__.py          # create_app 工厂函数、错误处理和路由注册
 │   │   ├── auth.py              # 密码哈希、Token 签发与接口鉴权装饰器
 │   │   ├── config.py            # 系统配置、目录配置、上传格式和端口配置
-│   │   ├── database.py          # SQLite 表结构、初始化、迁移和通用查询函数
+│   │   ├── database.py          # MySQL/PostgreSQL/SQLite 数据源适配、表结构初始化和通用查询函数
 │   │   ├── documents.py         # 教学内容生成、模板解析、HTML/DOCX/PPTX 基础生成与校验
 │   │   ├── errors.py            # ServiceError 业务异常定义
+│   │   ├── generation_client.py # 业务流程调用 Python 生成服务的客户端，未配置时回退本地生成
 │   │   ├── office.py            # Word/PPT 模板填充和 Office/PDF 导出适配
 │   │   ├── realtime.py          # WebSocket 进度推送服务
 │   │   ├── routes.py            # RESTful API 路由定义
@@ -42,6 +52,7 @@
 │   │   └── assets/
 │   │       ├── dashboard-v2.js  # 前端状态管理、接口调用和页面交互
 │   │       └── dashboard.css    # 工作台视觉样式
+│   ├── generation_service.py    # 可独立启动的 Python 生成服务入口
 │   ├── requirements.txt         # Python 依赖
 │   └── run.py                   # 本地启动入口
 ├── docs/                        # GitHub 上传、迭代与发布说明
@@ -58,10 +69,19 @@
 | 层次 | 代码位置 | 作用 |
 | --- | --- | --- |
 | 用户层 | `backend/web/dashboard.html`、`dashboard-v2.js`、`dashboard.css` | 提供登录、模板、生成、资源、编辑、导出、审计等可操作界面 |
-| 应用层 | `backend/app/routes.py`、`backend/app/auth.py` | 接收 HTTP 请求，完成 Token 鉴权、权限校验和 API 路由分发 |
-| 业务层 | `backend/app/services.py`、`backend/app/documents.py`、`backend/app/office.py` | 完成模板管理、任务调度、内容生成、格式校验、导出分享和人工编辑 |
-| 数据层 | `backend/app/database.py` | 初始化 SQLite 表结构，保存用户、角色、模板、任务、资源、校验、导出和审计日志 |
+| 应用层 | `business-service/src/main/java/.../web`、`backend/app/routes.py`、`backend/app/auth.py` | 接收 HTTP 请求，完成 Token 鉴权、权限校验、API 路由分发和生成服务代理 |
+| 业务层 | `business-service/src/main/java/.../client`、`backend/app/services.py`、`backend/app/generation_client.py`、`backend/app/office.py` | 完成模板管理、任务调度、生成服务调用、格式校验、导出分享和人工编辑 |
+| 数据层 | `backend/app/database.py`、`business-service/src/main/resources/application.yml` | 支持 MySQL/PostgreSQL 数据源配置，保存用户、角色、模板、任务、资源、校验、导出和审计日志；本地测试可使用 SQLite 兼容模式 |
 | 资源层 | `backend/data/`、`backend/storage/` | 管理知识库、模板文件、上传素材、生成文件和导出文件 |
+
+拆分后的职责边界：
+
+```text
+Web 工作台 / 客户端
+  → Spring Boot 业务服务（业务 API、数据库配置、生成服务代理）
+  → Python 生成服务（教学方案、课件结构、格式校验）
+  → MySQL/PostgreSQL（业务数据持久化）
+```
 
 核心业务流程：
 
@@ -80,7 +100,7 @@
 
 ## 四、核心数据对象与表设计
 
-详细设计报告中的实体类在当前实现中主要映射为 SQLite 表、序列化函数和业务服务对象。
+详细设计报告中的实体类在当前实现中主要映射为关系型数据库表、序列化函数和业务服务对象。生产或联调环境建议使用 MySQL/PostgreSQL；自动化测试仍可使用 SQLite 兼容模式降低部署门槛。
 
 | 设计对象 | 当前表/结构 | 说明 |
 | --- | --- | --- |
@@ -103,8 +123,11 @@
 | 文件 | 函数/对象 | 功能 |
 | --- | --- | --- |
 | `backend/run.py` | `create_app()` 调用入口 | 启动本地 Flask 服务，默认地址为 `http://127.0.0.1:5000/` |
+| `backend/generation_service.py` | `create_generation_app()` | 独立启动 Python 生成服务，提供教学方案生成、课件生成和格式校验 HTTP 接口 |
 | `backend/app/__init__.py` | `create_app(config_overrides=None)` | 创建 Flask 应用，加载配置、初始化数据库、启动后台任务、注册路由和错误处理 |
-| `backend/app/config.py` | `Config` | 定义数据目录、上传目录、数据库路径、Token 有效期、上传大小、WebSocket 端口和允许文件类型 |
+| `backend/app/config.py` | `Config` | 定义数据目录、上传目录、数据库 URL、生成服务地址、Token 有效期、上传大小、WebSocket 端口和允许文件类型 |
+| `backend/app/database.py` | `init_db()`、`fetch_one()`、`fetch_all()`、`execute()` | 按 `WATER_DATABASE_URL` 初始化 MySQL/PostgreSQL，未配置时使用 SQLite 兼容模式，并为业务层提供统一查询函数 |
+| `backend/app/generation_client.py` | `generate_teaching_plan()`、`generate_courseware()`、`validate_generated_plan()`、`validate_generated_courseware()` | 业务流程调用独立 Python 生成服务；未配置 `WATER_GENERATION_SERVICE_URL` 时回退到本地生成函数 |
 | `backend/app/errors.py` | `ServiceError` | 统一业务异常，包含错误码、错误信息、HTTP 状态码和详情 |
 
 ### 2. 认证与权限
@@ -254,7 +277,7 @@
 ### 1. 安装依赖
 
 ```powershell
-cd E:\big3\水利系统
+cd <项目目录>
 pip install -r backend\requirements.txt
 ```
 
@@ -266,16 +289,30 @@ python -m venv .venv
 pip install -r backend\requirements.txt
 ```
 
-### 2. 启动项目
+### 2. 配置数据库
+
+本地快速演示不设置数据库环境变量时，会使用 `backend/storage/` 下的 SQLite 兼容模式。联调或生产环境建议设置 MySQL/PostgreSQL：
+
+```powershell
+# PostgreSQL
+$env:WATER_DATABASE_URL="postgresql://water:water@127.0.0.1:5432/water_teaching"
+
+# MySQL
+$env:WATER_DATABASE_URL="mysql+pymysql://water:water@127.0.0.1:3306/water_teaching?charset=utf8mb4"
+```
+
+Spring Boot 业务服务使用 JDBC URL：
+
+```powershell
+$env:WATER_JDBC_URL="jdbc:postgresql://127.0.0.1:5432/water_teaching"
+$env:WATER_DB_USERNAME="water"
+$env:WATER_DB_PASSWORD="water"
+```
+
+### 3. 启动 Flask 工作台
 
 ```powershell
 python backend\run.py
-```
-
-或使用你的 Python 路径：
-
-```powershell
-& D:\pythoninter\python.exe E:\big3\水利系统\backend\run.py
 ```
 
 浏览器打开：
@@ -284,7 +321,35 @@ python backend\run.py
 http://127.0.0.1:5000/
 ```
 
-### 3. 示例账号
+### 4. 启动 Python 生成服务（拆分模式）
+
+如果要按双服务模式运行，先启动生成服务：
+
+```powershell
+python backend\generation_service.py
+```
+
+再让业务侧通过 HTTP 调用它：
+
+```powershell
+$env:WATER_GENERATION_SERVICE_URL="http://127.0.0.1:5001"
+python backend\run.py
+```
+
+### 5. 启动 Spring Boot 业务服务（可选）
+
+```powershell
+cd business-service
+mvn spring-boot:run
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:8080/api/v1/health
+```
+
+### 6. 示例账号
 
 ```text
 管理员：admin / admin123 / 验证码 2026
@@ -316,19 +381,23 @@ node --check backend\web\assets\dashboard-v2.js
 - PDF 导出依赖本机 Microsoft Word/PowerPoint 自动化能力；如果本机没有 Office，对应接口会返回明确错误提示
 - 如果没有上传 Word/PPT 模板，系统会使用结构化内容生成基础 DOCX/PPTX 或 HTML 预览
 
-## 十二、扩展方向
+## 十二、已完成工程化更新
+
+- 已新增 `business-service/` Spring Boot 业务服务骨架，内置健康检查、生成/校验代理接口、Python 生成服务客户端和 MySQL/PostgreSQL JDBC 配置。
+- 已新增 `backend/generation_service.py` 与 `backend/app/generation_client.py`，支持将教学方案生成、课件生成和格式校验从 Flask 业务流程中独立出来。
+- 已改造 `backend/app/database.py`，通过 `WATER_DATABASE_URL` 支持 PostgreSQL 和 MySQL，并保留 SQLite 兼容模式用于本地演示和单元测试。
+
+## 十三、扩展方向
 
 后续可按详细设计报告继续增强：
 
-- 将当前 Flask 单体拆分为 `Spring Boot 业务服务 + Python 生成服务`
-- 使用 MySQL/PostgreSQL 替换 SQLite
 - 使用 Redis 缓存模板元数据、权限信息和任务进度
 - 使用 Celery/RQ 等任务队列替代内存队列
 - 引入 Vue3 + Element Plus 重构前端组件
 - 增加模板插件、校验规则插件和更多导出转换器
 - 增加 HTTPS、CSRF 防护、对象存储和生产环境部署脚本
 
-## 十三、GitHub 协作说明
+## 十四、GitHub 协作说明
 
 完整上传和迭代步骤见：[docs/GITHUB_UPLOAD.md](docs/GITHUB_UPLOAD.md)。
 

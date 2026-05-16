@@ -1,0 +1,16 @@
+server:
+  port: ${WATER_BUSINESS_SERVICE_PORT:8080}
+
+spring:
+  application:
+    name: water-business-service
+  datasource:
+    url: ${WATER_JDBC_URL:jdbc:postgresql://127.0.0.1:5432/water_teaching}
+    username: ${WATER_DB_USERNAME:water}
+    password: ${WATER_DB_PASSWORD:water}
+    driver-class-name: ${WATER_JDBC_DRIVER:org.postgresql.Driver}
+
+water:
+  generation-service:
+    base-url: ${WATER_GENERATION_SERVICE_URL:http://127.0.0.1:5001}
+    timeout: ${WATER_GENERATION_SERVICE_TIMEOUT:30s}
