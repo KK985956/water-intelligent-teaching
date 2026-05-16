@@ -155,7 +155,10 @@ class BackendFlowTestCase(unittest.TestCase):
     def test_frontend_entry_and_readonly_lists(self):
         index = self.client.get("/")
         self.assertEqual(index.status_code, 200)
-        self.assertIn("水利智能教学应用工作台", index.get_data(as_text=True))
+        index_html = index.get_data(as_text=True)
+        self.assertIn("水利智能教学应用工作台", index_html)
+        self.assertIn('id="template-upload-form"', index_html)
+        self.assertIn('id="template-version-form"', index_html)
         index.close()
 
         runtime = self.client.get("/api/v1/runtime/context", headers=self.auth_headers())
@@ -183,8 +186,12 @@ class BackendFlowTestCase(unittest.TestCase):
             content_type="multipart/form-data",
         )
         self.assertEqual(upload_template.status_code, 200)
-        template_id = upload_template.get_json()["data"]["templateId"]
+        template_detail = upload_template.get_json()["data"]
+        template_id = template_detail["templateId"]
         self.assertTrue(template_id.startswith("TPL-"))
+        self.assertEqual(template_detail["templateType"], "THEORY")
+        self.assertIn("course_name", template_detail["placeholders"])
+        self.assertEqual(template_detail["formatRules"]["required_sections"], ["教学目标", "教学流程"])
 
         upload_resource = self.client.post(
             "/api/v1/resources/upload",

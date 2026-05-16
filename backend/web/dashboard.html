@@ -157,35 +157,64 @@
         <article class="panel panel-versions panel-tone-stage" data-step="template-admin" data-permission="templates:write">
           <div class="panel-head">
             <div>
-              <p class="eyebrow">Template Versioning</p>
-              <h3>模板版本与回滚</h3>
-              <p class="panel-summary">为现有模板上传新版本，保留历史并按版本号快速回退。</p>
+              <p class="eyebrow">Template Maintenance</p>
+              <h3>模板维护与回滚</h3>
+              <p class="panel-summary">上传全新模板，或为现有模板追加版本并按版本号快速回退。</p>
             </div>
             <span class="muted-note" id="template-version-note">选择一个模板后查看版本</span>
           </div>
-          <form class="stack-form" id="template-version-form">
-            <label>
-              <span>目标模板</span>
-              <select id="template-version-target" required></select>
-            </label>
-            <label>
-              <span>模板显示名称</span>
-              <input id="template-version-name" placeholder="为空时沿用当前名称" />
-            </label>
-            <label>
-              <span>变更说明</span>
-              <input id="template-version-log" placeholder="例如：补充章节占位符与版式" required />
-            </label>
-            <label>
-              <span>规则 JSON</span>
-              <textarea id="template-version-rules" rows="4" placeholder='可选，例如：{"required_sections":["教学目标","教学流程"]}'></textarea>
-            </label>
-            <label class="file-field">
-              <span>新版本文件</span>
-              <input id="template-version-file" type="file" required />
-            </label>
-            <button class="secondary-button" id="template-version-submit" type="submit">上传新版本</button>
-          </form>
+          <div class="template-maintenance-grid">
+            <form class="stack-form" id="template-upload-form">
+              <h4>新增模板</h4>
+              <label>
+                <span>模板名称</span>
+                <input id="template-upload-name" placeholder="例如：水利工程理论课模板" required />
+              </label>
+              <label>
+                <span>模板类型</span>
+                <select id="template-upload-type" required>
+                  <option value="THEORY">理论课</option>
+                  <option value="PRACTICE">实训课</option>
+                  <option value="TRAINING">培训课</option>
+                  <option value="REVIEW">复习课</option>
+                </select>
+              </label>
+              <label>
+                <span>规则 JSON</span>
+                <textarea id="template-upload-rules" rows="4" placeholder='可选，例如：{"required_sections":["教学目标","教学流程"]}'></textarea>
+              </label>
+              <label class="file-field">
+                <span>模板文件</span>
+                <input id="template-upload-file" type="file" accept=".doc,.docx,.ppt,.pptx,.txt,.md" required />
+              </label>
+              <button class="secondary-button" id="template-upload-submit" type="submit">上传模板</button>
+            </form>
+
+            <form class="stack-form" id="template-version-form">
+              <h4>上传新版本</h4>
+              <label>
+                <span>目标模板</span>
+                <select id="template-version-target" required></select>
+              </label>
+              <label>
+                <span>模板显示名称</span>
+                <input id="template-version-name" placeholder="为空时沿用当前名称" />
+              </label>
+              <label>
+                <span>变更说明</span>
+                <input id="template-version-log" placeholder="例如：补充章节占位符与版式" required />
+              </label>
+              <label>
+                <span>规则 JSON</span>
+                <textarea id="template-version-rules" rows="4" placeholder='可选，例如：{"required_sections":["教学目标","教学流程"]}'></textarea>
+              </label>
+              <label class="file-field">
+                <span>新版本文件</span>
+                <input id="template-version-file" type="file" accept=".doc,.docx,.ppt,.pptx,.txt,.md" required />
+              </label>
+              <button class="secondary-button" id="template-version-submit" type="submit">上传新版本</button>
+            </form>
+          </div>
           <div class="version-list" id="template-version-list"></div>
         </article>
 

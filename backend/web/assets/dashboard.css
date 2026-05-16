@@ -653,6 +653,19 @@ label span,
   gap: 14px;
 }
 
+.stack-form h4 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.template-maintenance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
 label,
 .field-caption {
   display: grid;
@@ -1072,6 +1085,7 @@ textarea:focus {
 }
 
 @media (max-width: 820px) {
+  .template-maintenance-grid,
   .user-grid {
     grid-template-columns: 1fr;
   }

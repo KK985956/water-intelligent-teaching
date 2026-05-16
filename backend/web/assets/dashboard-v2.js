@@ -119,6 +119,12 @@ function cacheElements() {
     "template-filter-keyword",
     "template-list",
     "load-templates",
+    "template-upload-form",
+    "template-upload-name",
+    "template-upload-type",
+    "template-upload-rules",
+    "template-upload-file",
+    "template-upload-submit",
     "template-version-form",
     "template-version-target",
     "template-version-name",
@@ -206,6 +212,7 @@ function bindEvents() {
     event.preventDefault();
     guardedAction(loadTemplates);
   });
+  elements["template-upload-form"].addEventListener("submit", handleTemplateUploadSubmit);
   elements["template-version-target"].addEventListener("change", () => guardedAction(ensureTemplateVersionDetail));
   elements["template-version-form"].addEventListener("submit", handleTemplateVersionSubmit);
   elements["template-version-list"].addEventListener("click", handleTemplateVersionActions);
@@ -358,6 +365,7 @@ function refreshSessionUI() {
   elements["metrics-strip"].classList.toggle("is-locked", !isLoggedIn);
   elements["workspace-grid"].classList.toggle("is-locked", !isLoggedIn);
   refreshWorkflow();
+  setFormDisabled(elements["template-upload-form"], !isLoggedIn || !hasPermission("templates:write"));
   setFormDisabled(elements["template-version-form"], !isLoggedIn || !hasPermission("templates:write"));
   setFormDisabled(elements["user-form"], !isLoggedIn || !hasPermission("users:manage"));
   setFormDisabled(elements["editor-form"], !isLoggedIn || !hasPermission("content:edit"));
@@ -509,6 +517,8 @@ function handleLogout(options = {}) {
   fillCoursewarePlanOptions();
   fillTemplateVersionOptions();
   fillUserRoleOptions();
+  elements["template-upload-form"].reset();
+  elements["template-version-form"].reset();
   elements["preview-frame"].srcdoc = "";
   elements["preview-title"].textContent = "选择一个成功任务后查看预览";
   elements["editor-content"].value = "";
@@ -1021,6 +1031,36 @@ async function handleResourceUpload(event) {
     handleError(error);
   } finally {
     setButtonBusy(button, false, "上传资源");
+  }
+}
+
+async function handleTemplateUploadSubmit(event) {
+  event.preventDefault();
+  const button = elements["template-upload-submit"];
+  setButtonBusy(button, true, "上传中...");
+  try {
+    const file = elements["template-upload-file"].files[0];
+    if (!file) {
+      throw new Error("请先选择模板文件。");
+    }
+    const formData = new FormData();
+    formData.append("name", elements["template-upload-name"].value.trim());
+    formData.append("type", elements["template-upload-type"].value);
+    formData.append("file", file);
+    if (elements["template-upload-rules"].value.trim()) {
+      formData.append("rulesJson", elements["template-upload-rules"].value.trim());
+    }
+    const detail = await api("/api/v1/templates/upload", { method: "POST", formData });
+    elements["template-upload-form"].reset();
+    toast("模板上传成功。", "success");
+    await loadTemplates();
+    elements["template-version-target"].value = detail.templateId;
+    state.activeTemplateDetail = detail;
+    renderTemplateVersionList();
+  } catch (error) {
+    handleError(error);
+  } finally {
+    setButtonBusy(button, false, "上传模板");
   }
 }
 
