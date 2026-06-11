@@ -207,6 +207,101 @@ class BackendFlowTestCase(unittest.TestCase):
         resource_id = upload_resource.get_json()["data"]["resourceId"]
         self.assertTrue(resource_id.startswith("RES-"))
 
+    def test_exam_flow(self):
+        """从教学方案生成试卷 → 预览 → 导出 → 读取内容。"""
+        # 先通过 API 生成教学方案
+        templates = self.client.get("/api/v1/templates", headers=self.auth_headers())
+        templates_json = templates.get_json()["data"]
+        plan_template = next(item for item in templates_json["list"] if item["templateType"] == "THEORY")
+
+        create_plan = self.client.post(
+            "/api/v1/generation/plans",
+            headers=self.auth_headers(),
+            json={
+                "templateId": plan_template["templateId"],
+                "courseName": "水文地质学",
+                "hours": 16,
+                "audience": "本科二年级",
+                "goals": ["掌握水文地质基本概念", "理解地下水运动规律"],
+                "focusPoints": ["地下水补给与排泄", "含水层特征"],
+            },
+        )
+        self.assertEqual(create_plan.status_code, 200)
+        plan_task = create_plan.get_json()["data"]
+        self.assertEqual(plan_task["status"], "SUCCESS")
+        plan_id = plan_task["result"]["targetId"]
+
+        # 基于方案生成试卷
+        create_exam = self.client.post(
+            "/api/v1/generation/exams",
+            headers=self.auth_headers(),
+            json={"planId": plan_id},
+        )
+        self.assertEqual(create_exam.status_code, 200)
+        exam_task = create_exam.get_json()["data"]
+        self.assertEqual(exam_task["status"], "SUCCESS")
+        self.assertEqual(exam_task["result"]["targetType"], "EXAM")
+        exam_id = exam_task["result"]["targetId"]
+        self.assertGreater(exam_task["result"]["examInfo"]["totalScore"], 0)
+        self.assertGreater(exam_task["result"]["examInfo"]["questionCount"], 0)
+
+        # 读取试卷内容
+        content_resp = self.client.get(f"/api/v1/content/EXAM/{exam_id}", headers=self.auth_headers())
+        self.assertEqual(content_resp.status_code, 200)
+        exam_content = content_resp.get_json()["data"]["content"]
+        self.assertIn("questions", exam_content)
+        self.assertGreater(len(exam_content["questions"]), 0)
+
+        # 验证题型齐全
+        qtypes = {q["type"] for q in exam_content["questions"]}
+        self.assertIn("SINGLE_CHOICE", qtypes)
+        self.assertIn("TRUE_FALSE", qtypes)
+        self.assertIn("FILL_BLANK", qtypes)
+        self.assertIn("SHORT_ANSWER", qtypes)
+        self.assertIn("ESSAY", qtypes)
+
+        # 验证题号连续
+        numbers = [q["number"] for q in exam_content["questions"]]
+        self.assertEqual(numbers, list(range(1, len(numbers) + 1)))
+
+        # 预览试卷
+        preview = self.client.get(exam_task["result"]["previewUrl"], headers=self.auth_headers())
+        self.assertEqual(preview.status_code, 200)
+        preview_html = preview.get_data(as_text=True)
+        self.assertIn(exam_content["course_name"], preview_html)
+        self.assertIn("考试试卷", preview_html)
+        preview.close()
+
+        # 导出试卷为 Markdown
+        export_resp = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": exam_id, "format": "md", "expiryDays": 3, "shareScope": "private"},
+        )
+        self.assertEqual(export_resp.status_code, 200)
+        download_url = export_resp.get_json()["data"]["downloadUrl"]
+        download = self.client.get(download_url, headers=self.auth_headers())
+        self.assertEqual(download.status_code, 200)
+        download_md = download.get_data(as_text=True)
+        self.assertIn(exam_content["course_name"], download_md)
+        download.close()
+
+        # 导出学生版（无答案）
+        export_student = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": exam_id, "format": "student_md", "expiryDays": 3, "shareScope": "public"},
+        )
+        self.assertEqual(export_student.status_code, 200)
+
+        # 导出 JSON
+        export_json = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": exam_id, "format": "json", "expiryDays": 3, "shareScope": "private"},
+        )
+        self.assertEqual(export_json.status_code, 200)
+
     def test_template_version_rollback_and_user_admin(self):
         admin_token = self.login("admin", "admin123")["token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}

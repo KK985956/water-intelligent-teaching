@@ -604,6 +604,10 @@ label span,
   background: linear-gradient(160deg, rgba(244, 249, 252, 0.96), rgba(255, 255, 255, 0.8));
 }
 
+.panel-tone-warm {
+  background: linear-gradient(160deg, rgba(255, 248, 240, 0.96), rgba(255, 250, 240, 0.78));
+}
+
 .panel-head {
   display: flex;
   align-items: flex-start;

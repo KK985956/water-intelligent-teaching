@@ -767,3 +767,646 @@ def build_docx(path, paragraphs, title="教学资料"):
         archive.writestr("word/document.xml", document_xml)
         archive.writestr("word/styles.xml", styles_xml)
     return path
+
+
+# ── Exam Paper Generation ──────────────────────────────────────────
+
+DEFAULT_EXAM_CONFIG = {
+    "single_choice": {"count": 10, "score_per_question": 2},
+    "true_false": {"count": 10, "score_per_question": 1},
+    "fill_blank": {"count": 5, "score_per_question": 2},
+    "short_answer": {"count": 3, "score_per_question": 10},
+    "essay": {"count": 1, "score_per_question": 30},
+}
+
+_CHOICE_PREFIX = ["A", "B", "C", "D", "E", "F"]
+
+_OPPOSITE_TERMS = [
+    ("补给", "排泄"),
+    ("含水层", "隔水层"),
+    ("承压水", "潜水"),
+    ("上游", "下游"),
+    ("坝体", "闸门"),
+    ("明渠", "暗管"),
+    ("灌溉", "排水"),
+    ("入渗", "蒸发"),
+    ("理论课", "实训课"),
+    ("平面图", "剖面图"),
+]
+
+
+def _term_mask(text):
+    """从文本中提取一个关键术语作为填空答案，返回(挖空后的文本, 答案)。"""
+    import re
+    separators = ["与", "和", "、", "的", "对", "在", "是", "等", "及"]
+    for sep in separators:
+        if sep in text:
+            parts = text.split(sep, 1)
+            if len(parts[0]) >= 2 and len(parts[0]) <= 10:
+                masked = "______" + sep + parts[1]
+                return masked, parts[0]
+    if len(text) >= 4:
+        half = len(text) // 2
+        return text[:half] + "______", text[half : half + 6].rstrip("。；，,")
+    return "______" + text, text[:6]
+
+
+def _generate_wrong_statement(concept_text):
+    """对一条知识点做错误转换，返回(错误表述, 被改的词, 替代词)。"""
+    import re
+    for wrong, right in _OPPOSITE_TERMS:
+        if wrong in concept_text:
+            return concept_text.replace(wrong, right), wrong, right
+        if right in concept_text:
+            return concept_text.replace(right, wrong), right, wrong
+    words = re.findall(r"[一-鿿]{2,4}", concept_text)
+    if len(words) >= 2:
+        idx = len(words) // 2
+        swapped = list(words)
+        swapped[idx] = "相关理论"
+        return "".join(swapped), words[idx], "相关理论"
+    return concept_text + "（错误）", "", ""
+
+
+def _build_single_choice_questions(concepts, count, score_per):
+    """从知识点列表生成单选题。"""
+    questions = []
+    pool = [c for c in concepts if len(c) >= 6]
+    if len(pool) < 2:
+        return questions
+    used = min(count, len(pool))
+    for i in range(used):
+        correct = pool[i]
+        others = [c for j, c in enumerate(pool) if j != i]
+        distractors = []
+        for d in others[:3]:
+            if len(d) > len(correct):
+                distractors.append(d[: len(correct) - 2] + "……")
+            elif len(d) < len(correct) - 3:
+                distractors.append(d + "等相关内容。")
+            else:
+                distractors.append(d)
+        while len(distractors) < 3:
+            distractors.append("以上说法均不准确。")
+        options_texts = [correct] + distractors[:3]
+        shuffled_indices = list(range(4))
+        import random as _random
+        _random.shuffle(shuffled_indices)
+        options = [
+            f"{_CHOICE_PREFIX[idx]}. {options_texts[orig]}"
+            for idx, orig in enumerate(shuffled_indices)
+        ]
+        answer_letter = _CHOICE_PREFIX[shuffled_indices.index(0)]
+        questions.append(
+            {
+                "type": "SINGLE_CHOICE",
+                "number": 0,
+                "stem": f"以下关于{concepts[i][:12]}的描述，正确的是？",
+                "options": options,
+                "answer": answer_letter,
+                "score": score_per,
+                "knowledge_point": concepts[i],
+            }
+        )
+    return questions
+
+
+def _build_true_false_questions(concepts, count, score_per):
+    """从知识点列表生成判断题。"""
+    import random as _random
+    questions = []
+    pool = [c for c in concepts if len(c) >= 4]
+    if not pool:
+        return questions
+    used = min(count, len(pool))
+    chosen = _random.sample(pool, used) if used <= len(pool) else pool[:used]
+    for i, concept in enumerate(chosen):
+        is_true = _random.random() < 0.5
+        if is_true:
+            stem = f"{concept}。"
+            answer = True
+        else:
+            stem, _, _ = _generate_wrong_statement(concept)
+            if stem == concept or stem == f"{concept}（错误）":
+                stem = f"{concept}这一说法在工程实践中并非绝对成立。"
+            answer = False
+        questions.append(
+            {
+                "type": "TRUE_FALSE",
+                "number": 0,
+                "stem": stem,
+                "answer": answer,
+                "score": score_per,
+                "knowledge_point": concept,
+            }
+        )
+    return questions
+
+
+def _build_fill_blank_questions(points, count, score_per):
+    """从重点/难点列表生成填空题。"""
+    questions = []
+    pool = [p for p in points if len(p) >= 4]
+    used = min(count, len(pool))
+    for i in range(used):
+        stem, answer = _term_mask(pool[i])
+        questions.append(
+            {
+                "type": "FILL_BLANK",
+                "number": 0,
+                "stem": stem,
+                "answer": answer,
+                "score": score_per,
+                "knowledge_point": pool[i],
+            }
+        )
+    return questions
+
+
+def _build_short_answer_questions(focus_points, difficult_points, count, score_per):
+    """从重点/难点列表生成简答题。"""
+    questions = []
+    pool = []
+    for p in focus_points:
+        if p not in pool:
+            pool.append(p)
+    for p in difficult_points:
+        if p not in pool:
+            pool.append(p)
+    used = min(count, len(pool))
+    for i in range(used):
+        questions.append(
+            {
+                "type": "SHORT_ANSWER",
+                "number": 0,
+                "stem": f"请简述{pool[i]}。",
+                "reference_answer": f"请参考教材中关于{pool[i]}的详细阐述，从概念定义、核心特征和工程应用三个方面作答。",
+                "score": score_per,
+                "knowledge_point": pool[i],
+            }
+        )
+    return questions
+
+
+def _build_essay_question(plan, score):
+    """从公式和案例生成论述/计算题。"""
+    formulas = plan.get("formulas") or []
+    cases = plan.get("cases") or []
+    course_name = plan.get("course_name", "本课程")
+
+    formula_text = formulas[0] if formulas else ""
+    case_text = cases[0] if cases else f"结合{plan.get('course_name', '水利工程')}领域的实际场景"
+
+    if formula_text and case_text:
+        stem = (
+            f"{case_text}\n"
+            f"相关知识公式：{formula_text}\n"
+            f"请：(1) 解释该公式各参数的物理意义；"
+            f"(2) 结合案例说明该公式在工程中的应用；"
+            f"(3) 提出至少两条优化建议。"
+        )
+        reference = (
+            f"（1）公式参数说明：{formula_text}中各参数含义请参考教材。\n"
+            f"（2）工程应用：{case_text}\n"
+            f"（3）优化建议：结合实际工程条件，从参数选取和边界条件两个方面提出改进措施。"
+        )
+    elif case_text:
+        stem = (
+            f"{case_text}\n"
+            f"请：(1) 分析案例中涉及的核心工程技术问题；"
+            f"(2) 提出系统的解决方案；"
+            f"(3) 评价方案的可行性与局限性。"
+        )
+        reference = f"（1）核心问题分析：{case_text}\n（2）解决方案：综合运用{course_name}所学知识。\n（3）可行性评价：结合工程实际进行评判。"
+    else:
+        stem = (
+            f"请结合{course_name}课程所学内容，完成以下论述：\n"
+            f"(1) 梳理本课程的核心知识体系；\n"
+            f"(2) 选取一个水利工程典型案例进行分析；\n"
+            f"(3) 阐述理论知识如何指导工程实践。"
+        )
+        reference = "请根据课堂讲授内容和教材进行综合论述，要求逻辑清晰、论据充分。"
+
+    return {
+        "type": "ESSAY",
+        "number": 0,
+        "stem": stem,
+        "reference_answer": reference,
+        "score": score,
+        "knowledge_point": plan.get("focus_points", ["课程综合应用"])[0] if plan.get("focus_points") else "课程综合应用",
+        "formula": formula_text,
+    }
+
+
+def build_exam_paper(plan, config=None):
+    """根据教学方案生成试卷。
+
+    config 格式：
+      {"single_choice": {"count": 10, "score_per_question": 2}, ...}
+    传入 None 使用默认配置。
+    """
+    cfg = config or DEFAULT_EXAM_CONFIG
+
+    concepts = plan.get("concepts") or []
+    all_concepts = list(concepts)
+    # 如果 concepts 不足，用 outline 中的知识点补充
+    for item in plan.get("outline") or []:
+        for kp in item.get("knowledge_points") or []:
+            if kp not in all_concepts:
+                all_concepts.append(kp)
+
+    focus_points = plan.get("focus_points") or []
+    difficult_points = plan.get("difficult_points") or []
+    all_points = focus_points + difficult_points
+    if not all_points:
+        all_points = plan.get("goals") or ["课程核心内容"]
+
+    questions = []
+    number = 0
+
+    # 单选题
+    sc_cfg = cfg.get("single_choice", {"count": 10, "score_per_question": 2})
+    sc_count = min(sc_cfg["count"], len(all_concepts))
+    sc_questions = _build_single_choice_questions(all_concepts, sc_count, sc_cfg["score_per_question"])
+    for q in sc_questions:
+        number += 1
+        q["number"] = number
+        questions.append(q)
+
+    # 判断题
+    tf_cfg = cfg.get("true_false", {"count": 10, "score_per_question": 1})
+    tf_count = min(tf_cfg["count"], len(all_concepts))
+    tf_questions = _build_true_false_questions(all_concepts, tf_count, tf_cfg["score_per_question"])
+    for q in tf_questions:
+        number += 1
+        q["number"] = number
+        questions.append(q)
+
+    # 填空题
+    fb_cfg = cfg.get("fill_blank", {"count": 5, "score_per_question": 2})
+    fb_count = min(fb_cfg["count"], len(all_points))
+    fb_questions = _build_fill_blank_questions(all_points, fb_count, fb_cfg["score_per_question"])
+    for q in fb_questions:
+        number += 1
+        q["number"] = number
+        questions.append(q)
+
+    # 简答题
+    sa_cfg = cfg.get("short_answer", {"count": 3, "score_per_question": 10})
+    sa_count = min(sa_cfg["count"], len(all_points))
+    sa_questions = _build_short_answer_questions(focus_points, difficult_points, sa_count, sa_cfg["score_per_question"])
+    for q in sa_questions:
+        number += 1
+        q["number"] = number
+        questions.append(q)
+
+    # 论述/计算题
+    es_cfg = cfg.get("essay", {"count": 1, "score_per_question": 30})
+    es_count = min(es_cfg["count"], 1)
+    for _ in range(es_count):
+        number += 1
+        q = _build_essay_question(plan, es_cfg["score_per_question"])
+        q["number"] = number
+        questions.append(q)
+
+    total_score = sum(q["score"] for q in questions)
+
+    return {
+        "course_name": plan.get("course_name", ""),
+        "total_score": total_score,
+        "question_count": len(questions),
+        "config": cfg,
+        "questions": questions,
+        "generated_at": plan.get("generated_at", ""),
+    }
+
+
+def render_exam_html(exam):
+    """将试卷渲染为 HTML 预览（标准试卷排版，含答案）。"""
+    q_blocks = []
+    for q in exam["questions"]:
+        qtype_label = {
+            "SINGLE_CHOICE": "单选题",
+            "TRUE_FALSE": "判断题",
+            "FILL_BLANK": "填空题",
+            "SHORT_ANSWER": "简答题",
+            "ESSAY": "论述/计算题",
+        }.get(q["type"], q["type"])
+
+        answer_html = ""
+        if q["type"] == "SINGLE_CHOICE":
+            options_html = "".join([f"<div class=\"option\">{html.escape(opt)}</div>" for opt in q["options"]])
+            answer_html = (
+                f"<div class=\"options\">{options_html}</div>"
+                f"<p class=\"answer\"><strong>参考答案：</strong>{html.escape(q['answer'])}</p>"
+            )
+        elif q["type"] == "TRUE_FALSE":
+            answer_html = (
+                f"<p class=\"answer\"><strong>参考答案：</strong>{'正确' if q['answer'] else '错误'}</p>"
+            )
+        elif q["type"] == "FILL_BLANK":
+            answer_html = f"<p class=\"answer\"><strong>参考答案：</strong>{html.escape(q['answer'])}</p>"
+        elif q["type"] == "SHORT_ANSWER":
+            answer_html = (
+                f"<div class=\"answer-area\">"
+                f"<p><em>答题区域：</em></p>"
+                f"<div class=\"answer-lines\"></div>"
+                f"</div>"
+                f"<p class=\"answer\"><strong>参考答案：</strong>{html.escape(q.get('reference_answer', ''))}</p>"
+            )
+        elif q["type"] == "ESSAY":
+            answer_html = (
+                f"<div class=\"answer-area\">"
+                f"<p><em>答题区域：</em></p>"
+                f"<div class=\"answer-lines\" style=\"min-height:200px\"></div>"
+                f"</div>"
+                f"<p class=\"answer\"><strong>参考答案要点：</strong>{html.escape(q.get('reference_answer', ''))}</p>"
+            )
+
+        q_blocks.append(
+            f"""
+            <div class="question-card">
+              <div class="question-header">
+                <span class="q-number">{q['number']}.</span>
+                <span class="q-type-badge">{qtype_label}</span>
+                <span class="q-score">（{q['score']}分）</span>
+              </div>
+              <div class="question-stem">{html.escape(q['stem'])}</div>
+              {answer_html}
+            </div>
+            """
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>{html.escape(exam['course_name'])}考试试卷</title>
+  <style>
+    body {{
+      margin: 0;
+      padding: 32px;
+      font-family: "Microsoft YaHei", "PingFang SC", "SimSun", serif;
+      background: #f4f6f9;
+      color: #222;
+    }}
+    .paper {{
+      max-width: 900px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 48px 40px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }}
+    .paper-header {{
+      text-align: center;
+      border-bottom: 2px solid #1a3c5e;
+      padding-bottom: 24px;
+      margin-bottom: 32px;
+    }}
+    .paper-header h1 {{
+      font-size: 22px;
+      margin: 0 0 12px;
+      letter-spacing: 0.1em;
+    }}
+    .paper-meta {{
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      font-size: 14px;
+      color: #555;
+    }}
+    .question-card {{
+      border: 1px solid #e8ecf1;
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin-bottom: 16px;
+      background: #fafbfc;
+    }}
+    .question-header {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }}
+    .q-number {{
+      font-weight: 700;
+      font-size: 16px;
+      color: #1a3c5e;
+    }}
+    .q-type-badge {{
+      font-size: 12px;
+      padding: 2px 10px;
+      border-radius: 12px;
+      background: #e0ecf4;
+      color: #2a5078;
+    }}
+    .q-score {{
+      font-size: 13px;
+      color: #888;
+      margin-left: auto;
+    }}
+    .question-stem {{
+      font-size: 15px;
+      line-height: 1.7;
+      margin-bottom: 10px;
+      white-space: pre-line;
+    }}
+    .options {{
+      margin: 8px 0 8px 20px;
+    }}
+    .option {{
+      padding: 4px 0;
+      font-size: 14px;
+    }}
+    .answer {{
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: #e8f5e9;
+      border-left: 3px solid #4caf50;
+      border-radius: 4px;
+      font-size: 14px;
+    }}
+    .answer-area {{
+      margin: 8px 0;
+      padding: 8px 12px;
+      background: #fefefe;
+      border: 1px dashed #ccc;
+      border-radius: 4px;
+    }}
+    .answer-lines {{
+      min-height: 80px;
+      background: repeating-linear-gradient(
+        transparent, transparent 27px, #e0e0e0 27px, #e0e0e0 28px
+      );
+    }}
+    @media print {{
+      body {{ background: #fff; padding: 0; }}
+      .paper {{ box-shadow: none; border: none; }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="paper">
+    <div class="paper-header">
+      <h1>{html.escape(exam['course_name'])}考试试卷</h1>
+      <div class="paper-meta">
+        <span>满分：{exam['total_score']}分</span>
+        <span>题量：{exam['question_count']}题</span>
+        <span>生成时间：{exam.get('generated_at', '')}</span>
+      </div>
+    </div>
+    {''.join(q_blocks)}
+  </main>
+</body>
+</html>
+"""
+
+
+def render_exam_markdown(exam, with_answers=True):
+    """将试卷渲染为 Markdown（教师版含答案）。"""
+    lines = [
+        f"# {exam['course_name']}考试试卷",
+        "",
+        f"- 满分：{exam['total_score']}分",
+        f"- 题量：{exam['question_count']}题",
+        f"- 生成时间：{exam.get('generated_at', '')}",
+        "",
+        "---",
+        "",
+    ]
+
+    current_type = None
+    type_headers = {
+        "SINGLE_CHOICE": "## 一、单选题",
+        "TRUE_FALSE": "## 二、判断题",
+        "FILL_BLANK": "## 三、填空题",
+        "SHORT_ANSWER": "## 四、简答题",
+        "ESSAY": "## 五、论述/计算题",
+    }
+
+    for q in exam["questions"]:
+        if q["type"] != current_type:
+            current_type = q["type"]
+            lines.append(type_headers.get(current_type, f"## {current_type}"))
+            lines.append("")
+
+        lines.append(f"**{q['number']}.（{q['score']}分）** {q['stem']}")
+
+        if q["type"] == "SINGLE_CHOICE":
+            for opt in q["options"]:
+                lines.append(f"  - {opt}")
+            if with_answers:
+                lines.append(f"  > 参考答案：**{q['answer']}**")
+        elif q["type"] == "TRUE_FALSE":
+            if with_answers:
+                answer_text = "正确" if q["answer"] else "错误"
+                lines.append(f"  > 参考答案：**{answer_text}**")
+        elif q["type"] == "FILL_BLANK":
+            if with_answers:
+                lines.append(f"  > 参考答案：**{q['answer']}**")
+        elif q["type"] == "SHORT_ANSWER":
+            lines.append("")
+            if with_answers:
+                lines.append(f"  > 参考答案：{q.get('reference_answer', '')}")
+        elif q["type"] == "ESSAY":
+            lines.append("")
+            if with_answers:
+                lines.append(f"  > 参考答案要点：{q.get('reference_answer', '')}")
+
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def render_exam_student_markdown(exam):
+    """将试卷渲染为 Markdown（学生版不含答案）。"""
+    return render_exam_markdown(exam, with_answers=False)
+
+
+def exam_lines(exam):
+    """试卷文本行形式。"""
+    lines = [
+        f"{exam['course_name']}考试试卷",
+        f"满分：{exam['total_score']}分 | 题量：{exam['question_count']}题",
+        "",
+    ]
+    for q in exam["questions"]:
+        lines.append(f"{q['number']}. [{q['type']}]（{q['score']}分）{q['stem']}")
+        if q["type"] == "SINGLE_CHOICE":
+            for opt in q["options"]:
+                lines.append(f"    {opt}")
+            lines.append(f"    答案：{q['answer']}")
+        elif q["type"] in ("TRUE_FALSE", "FILL_BLANK"):
+            lines.append(f"    答案：{q['answer']}")
+        elif q["type"] in ("SHORT_ANSWER", "ESSAY"):
+            lines.append(f"    参考答案：{q.get('reference_answer', '')[:80]}……")
+        lines.append("")
+    return lines
+
+
+def validate_exam(exam, rules=None):
+    """校验试卷质量。"""
+    issues = []
+    cfg = exam.get("config") or DEFAULT_EXAM_CONFIG
+
+    # 检查各题型数量
+    for qtype, expected in cfg.items():
+        actual = sum(1 for q in exam["questions"] if q["type"] == qtype.upper())
+        if actual < expected.get("count", 0):
+            issues.append(
+                {
+                    "issueCode": f"EXAM_{qtype.upper()}_COUNT",
+                    "fieldPath": "questions",
+                    "severity": "MEDIUM",
+                    "message": f"{qtype}数量不足：期望{expected['count']}，实际{actual}。",
+                    "suggestion": f"补充更多知识点以生成足够的{qtype}。",
+                }
+            )
+
+    # 检查总分
+    total = sum(q["score"] for q in exam["questions"])
+    if total <= 0:
+        issues.append(
+            {
+                "issueCode": "EXAM_SCORE_ZERO",
+                "fieldPath": "total_score",
+                "severity": "HIGH",
+                "message": "试卷总分为零，无法使用。",
+                "suggestion": "检查试题生成逻辑。",
+            }
+        )
+
+    # 检查是否有题目
+    if not exam.get("questions"):
+        issues.append(
+            {
+                "issueCode": "EXAM_EMPTY",
+                "fieldPath": "questions",
+                "severity": "HIGH",
+                "message": "试卷无任何题目。",
+                "suggestion": "确保教学方案包含足够的知识点和重点内容。",
+            }
+        )
+
+    # 检查是否有空答案
+    for q in exam["questions"]:
+        answer = q.get("answer") or q.get("reference_answer", "")
+        if not answer or not str(answer).strip():
+            issues.append(
+                {
+                    "issueCode": "EXAM_ANSWER_MISSING",
+                    "fieldPath": f"questions.{q['number']}",
+                    "severity": "HIGH",
+                    "message": f"第{q['number']}题缺少答案。",
+                    "suggestion": "为该题目补充参考答案。",
+                }
+            )
+
+    score = max(0, 100 - sum({"LOW": 5, "MEDIUM": 10, "HIGH": 20}[item["severity"]] for item in issues))
+    return {
+        "issues": issues,
+        "score": score,
+        "status": "PASS" if not issues else "WARN" if score >= 80 else "FAIL",
+    }

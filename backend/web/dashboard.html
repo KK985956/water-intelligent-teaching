@@ -284,6 +284,24 @@
           </form>
         </article>
 
+        <article class="panel panel-exam panel-tone-warm" data-step="exam">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Exam Generator</p>
+              <h3>试卷生成</h3>
+              <p class="panel-summary">从已成功的教学方案自动生成考试试卷，包含单选、判断、填空、简答和论述/计算五种题型。</p>
+            </div>
+          </div>
+          <form class="stack-form" id="exam-form">
+            <label>
+              <span>来源方案</span>
+              <select id="exam-plan-id" required></select>
+            </label>
+            <p class="form-note">选择一个已生成成功的教学方案，系统将从其知识点、重点、难点、案例和公式中自动出题。</p>
+            <button class="primary-button" id="exam-submit" type="submit">生成试卷</button>
+          </form>
+        </article>
+
         <article class="panel panel-resources panel-tone-slate" data-step="resources" data-permission="resources:read">
           <div class="panel-head">
             <div>
@@ -415,6 +433,7 @@
                 <select id="editor-target-type">
                   <option value="PLAN">教学方案</option>
                   <option value="COURSEWARE">教学课件</option>
+                  <option value="EXAM">试卷</option>
                 </select>
               </label>
               <label>

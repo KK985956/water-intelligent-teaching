@@ -15,14 +15,20 @@ from .database import execute, fetch_all, fetch_one, init_db
 from .documents import (
     build_courseware_template_context,
     build_docx,
+    build_exam_paper,
     build_plan_template_context,
     courseware_lines,
+    exam_lines,
     extract_placeholders,
     extract_template_text,
     render_courseware_html,
+    render_exam_html,
+    render_exam_markdown,
+    render_exam_student_markdown,
     render_plan_html,
     render_plan_markdown,
     teaching_plan_lines,
+    validate_exam,
 )
 from .errors import ServiceError
 from .generation_client import (
@@ -123,6 +129,9 @@ TARGET_TYPE_ALIASES = {
     "TEACHING_PLAN": "PLAN",
     "COURSEWARE": "COURSEWARE",
     "courseware": "COURSEWARE",
+    "EXAM": "EXAM",
+    "exam": "EXAM",
+    "EXAM_PAPER": "EXAM",
 }
 
 RESOURCE_TYPE_ALIASES = {
@@ -243,6 +252,16 @@ def _ensure_task_access(task_row, user_row):
 
 def _task_user_for_target(target_type, target_id):
     normalized_type = normalize_target_type(target_type)
+    if normalized_type == "EXAM":
+        return fetch_one(
+            """
+            SELECT gt.user_id
+            FROM t_exam_paper ep
+            JOIN t_generation_task gt ON gt.task_id = ep.task_id
+            WHERE ep.exam_id = ?
+            """,
+            (target_id,),
+        )
     if normalized_type == "PLAN":
         return fetch_one(
             """
@@ -1173,6 +1192,40 @@ def create_courseware_task(user_id, payload):
     return get_task(task_id)
 
 
+def _validate_exam_payload(payload):
+    if not payload.get("planId"):
+        raise ServiceError(1000, "planId 不能为空", 400)
+    plan = fetch_one("SELECT * FROM t_teaching_plan WHERE plan_id = ?", (payload["planId"],))
+    if not plan:
+        raise ServiceError(2003, "教学方案不存在，无法生成试卷", 404)
+    return plan
+
+
+def create_exam_task(user_id, payload):
+    plan = _validate_exam_payload(payload)
+    user_row = get_user_by_id(user_id)
+    _ensure_target_access("PLAN", plan["plan_id"], user_row)
+
+    exam_config = payload.get("examConfig") if isinstance(payload.get("examConfig"), dict) else None
+    params = {
+        "planId": plan["plan_id"],
+        "examConfig": exam_config,
+        "generatedAt": now_text(),
+    }
+    task_id = make_id("TASK")
+    execute(
+        """
+        INSERT INTO t_generation_task(task_id, task_type, user_id, template_id, params_json, status, progress,
+            result_path, result_meta_json, error_message, retry_count, created_at, updated_at)
+        VALUES (?, 'EXAM', ?, '', ?, 'CREATED', 0, '', '{}', '', 0, ?, ?)
+        """,
+        (task_id, user_id, json_dumps(params), now_text(), now_text()),
+    )
+    record_audit(user_id, "TASK_CREATE", "EXAM", task_id, "SUCCESS", "创建试卷生成任务")
+    _dispatch_task(task_id)
+    return get_task(task_id)
+
+
 def get_task(task_id, user_row=None):
     task = fetch_one("SELECT * FROM t_generation_task WHERE task_id = ?", (task_id,))
     if not task:
@@ -1482,6 +1535,71 @@ def _build_courseware_result(task):
     return result_meta, str(presentation_path or json_path)
 
 
+def _build_exam_result(task):
+    params = json_loads(task["params_json"], {})
+    plan_row = fetch_one("SELECT * FROM t_teaching_plan WHERE plan_id = ?", (params["planId"],))
+    if not plan_row:
+        raise ServiceError(2003, "教学方案不存在，无法生成试卷", 404)
+
+    plan = json_loads(plan_row["content_json"], {})
+    exam_config = params.get("examConfig")
+    exam = build_exam_paper(plan, exam_config)
+
+    result_dir = _ensure_result_dir(task["task_id"])
+    json_path = result_dir / "exam.json"
+    preview_path = result_dir / "exam_preview.html"
+    md_path = result_dir / "exam.md"
+    md_student_path = result_dir / "exam_student.md"
+    _write_text(json_path, json_dumps(exam))
+    _write_text(preview_path, render_exam_html(exam))
+    _write_text(md_path, render_exam_markdown(exam, with_answers=True))
+    _write_text(md_student_path, render_exam_student_markdown(exam))
+
+    validation = validate_exam(exam)
+    exam_id = make_id("EXAM")
+    execute(
+        """
+        INSERT INTO t_exam_paper(exam_id, plan_id, task_id, course_name, total_score, question_count,
+            config_json, content_json, preview_path, validate_status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            exam_id,
+            plan_row["plan_id"],
+            task["task_id"],
+            exam["course_name"],
+            exam["total_score"],
+            exam["question_count"],
+            json_dumps(exam["config"]),
+            json_dumps(exam),
+            str(preview_path),
+            validation["status"],
+            now_text(),
+        ),
+    )
+    _create_validation_record(exam_id, "EXAM", validation)
+    result_meta = {
+        "targetType": "EXAM",
+        "targetId": exam_id,
+        "previewUrl": f"/api/v1/previews/exam/{exam_id}",
+        "downloadHint": str(json_path),
+        "score": validation["score"],
+        "validationStatus": validation["status"],
+        "examInfo": {
+            "totalScore": exam["total_score"],
+            "questionCount": exam["question_count"],
+            "questionTypes": list(set(q["type"] for q in exam["questions"])),
+        },
+        "files": {
+            "html": str(preview_path),
+            "json": str(json_path),
+            "markdown": str(md_path),
+            "markdownStudent": str(md_student_path),
+        },
+    }
+    return result_meta, str(json_path)
+
+
 def _latest_validation(target_id, target_type):
     row = fetch_one(
         """
@@ -1498,6 +1616,8 @@ def _latest_validation(target_id, target_type):
 def get_generated_content(target_id, target_type, user_row):
     normalized_type = normalize_target_type(target_type)
     _ensure_target_access(normalized_type, target_id, user_row)
+    if normalized_type == "EXAM":
+        return _get_exam_content(target_id)
     if normalized_type == "PLAN":
         row = fetch_one("SELECT * FROM t_teaching_plan WHERE plan_id = ?", (target_id,))
         if not row:
@@ -1523,6 +1643,21 @@ def get_generated_content(target_id, target_type, user_row):
         "previewUrl": f"/api/v1/previews/courseware/{target_id}",
         "validation": _latest_validation(target_id, normalized_type),
         "updatedFrom": row["file_path"],
+    }
+
+
+def _get_exam_content(target_id):
+    row = fetch_one("SELECT * FROM t_exam_paper WHERE exam_id = ?", (target_id,))
+    if not row:
+        raise ServiceError(2003, "试卷不存在", 404)
+    content = json_loads(row["content_json"], {})
+    return {
+        "targetId": target_id,
+        "targetType": "EXAM",
+        "content": content,
+        "previewUrl": f"/api/v1/previews/exam/{target_id}",
+        "validation": _latest_validation(target_id, "EXAM"),
+        "updatedFrom": row["preview_path"],
     }
 
 
@@ -1762,6 +1897,11 @@ def process_task(task_id):
             if _is_task_canceled(task_id):
                 return
             result_meta, result_path = _build_courseware_result(task)
+        elif task["task_type"] == "EXAM":
+            _update_task(task_id, "VALIDATING", 70)
+            if _is_task_canceled(task_id):
+                return
+            result_meta, result_path = _build_exam_result(task)
         else:
             raise ServiceError(5000, "未知任务类型", 500)
         if _is_task_canceled(task_id):
@@ -1843,6 +1983,9 @@ def _detect_target(target_id):
     courseware = fetch_one("SELECT * FROM t_courseware WHERE courseware_id = ?", (target_id,))
     if courseware:
         return "COURSEWARE", courseware
+    exam = fetch_one("SELECT * FROM t_exam_paper WHERE exam_id = ?", (target_id,))
+    if exam:
+        return "EXAM", exam
     raise ServiceError(2003, "导出目标不存在", 404)
 
 
@@ -1927,6 +2070,47 @@ def _export_courseware(courseware_row, requested_format):
     raise ServiceError(4001, "当前课件暂不支持该导出格式", 400)
 
 
+def _export_exam(exam_row, requested_format):
+    exam = json_loads(exam_row["content_json"], {})
+    requested_format = requested_format.lower()
+    if requested_format in {"html"}:
+        html_path = Path(current_app.config["EXPORT_DIR"]) / f"{exam_row['exam_id']}.html"
+        html_path.write_text(render_exam_html(exam), encoding="utf-8")
+        return html_path, "html"
+    if requested_format in {"json"}:
+        source = Path(exam_row["preview_path"]).with_name("exam.json")
+        return _copy_export(source, f"{exam_row['exam_id']}.json"), "json"
+    if requested_format in {"md", "markdown"}:
+        target = Path(current_app.config["EXPORT_DIR"]) / f"{exam_row['exam_id']}_教师版.md"
+        target.write_text(render_exam_markdown(exam, with_answers=True), encoding="utf-8")
+        return target, "md"
+    if requested_format in {"txt"}:
+        target = Path(current_app.config["EXPORT_DIR"]) / f"{exam_row['exam_id']}.txt"
+        target.write_text("\n".join(exam_lines(exam)), encoding="utf-8")
+        return target, "txt"
+    if requested_format in {"doc", "docx", "word"}:
+        docx_path = Path(current_app.config["EXPORT_DIR"]) / f"{exam_row['exam_id']}.docx"
+        build_docx(docx_path, exam_lines(exam), f"{exam['course_name']}考试试卷")
+        return docx_path, "docx"
+    if requested_format in {"student_md", "student"}:
+        target = Path(current_app.config["EXPORT_DIR"]) / f"{exam_row['exam_id']}_学生版.md"
+        target.write_text(render_exam_student_markdown(exam), encoding="utf-8")
+        return target, "md"
+    if requested_format in {"pdf"}:
+        target = Path(current_app.config["EXPORT_DIR"]) / f"{exam_row['exam_id']}.pdf"
+        try:
+            html_path = Path(current_app.config["EXPORT_DIR"]) / f"{exam_row['exam_id']}_temp.html"
+            html_path.write_text(render_exam_html(exam), encoding="utf-8")
+            html_to_pdf(html_path, target)
+        except Exception as exc:
+            raise ServiceError(4001, "试卷 PDF 导出失败", 500, str(exc)) from exc
+        finally:
+            if "html_path" in locals() and html_path.exists():
+                html_path.unlink()
+        return target, "pdf"
+    raise ServiceError(4001, "当前试卷暂不支持该导出格式", 400)
+
+
 def create_export(target_id, requested_format, expiry_days, share_scope, user_id, max_downloads=0):
     user_row = get_user_by_id(user_id)
     target_type, row = _detect_target(target_id)
@@ -1943,6 +2127,8 @@ def create_export(target_id, requested_format, expiry_days, share_scope, user_id
 
     if target_type == "PLAN":
         file_path, actual_format = _export_plan(row, requested_format)
+    elif target_type == "EXAM":
+        file_path, actual_format = _export_exam(row, requested_format)
     else:
         file_path, actual_format = _export_courseware(row, requested_format)
 
@@ -2019,7 +2205,9 @@ def ensure_not_expired(export_row):
 def get_preview_file(target_type, target_id, user_row=None):
     normalized_type = normalize_target_type(target_type)
     _ensure_target_access(normalized_type, target_id, user_row)
-    if normalized_type == "PLAN":
+    if normalized_type == "EXAM":
+        row = fetch_one("SELECT preview_path FROM t_exam_paper WHERE exam_id = ?", (target_id,))
+    elif normalized_type == "PLAN":
         row = fetch_one("SELECT preview_path FROM t_teaching_plan WHERE plan_id = ?", (target_id,))
     else:
         row = fetch_one("SELECT preview_path FROM t_courseware WHERE courseware_id = ?", (target_id,))

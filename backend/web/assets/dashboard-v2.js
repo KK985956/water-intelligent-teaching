@@ -147,6 +147,9 @@ function cacheElements() {
     "courseware-template",
     "resource-picks",
     "courseware-submit",
+    "exam-form",
+    "exam-plan-id",
+    "exam-submit",
     "resource-form",
     "resource-type",
     "resource-tags",
@@ -218,6 +221,7 @@ function bindEvents() {
   elements["template-version-list"].addEventListener("click", handleTemplateVersionActions);
   elements["plan-form"].addEventListener("submit", handlePlanSubmit);
   elements["courseware-form"].addEventListener("submit", handleCoursewareSubmit);
+  elements["exam-form"].addEventListener("submit", handleExamSubmit);
   elements["resource-form"].addEventListener("submit", handleResourceUpload);
   elements["user-form"].addEventListener("submit", handleUserCreate);
   elements["template-list"].addEventListener("click", handleTemplateActions);
@@ -515,6 +519,7 @@ function handleLogout(options = {}) {
   renderAudits();
   fillTemplateOptions();
   fillCoursewarePlanOptions();
+  fillExamPlanOptions();
   fillTemplateVersionOptions();
   fillUserRoleOptions();
   elements["template-upload-form"].reset();
@@ -614,6 +619,7 @@ async function loadTasks() {
   sortTasks();
   renderTasks();
   fillCoursewarePlanOptions();
+  fillExamPlanOptions();
   updateMetrics();
   schedulePolling();
 }
@@ -918,7 +924,7 @@ function renderTaskCard(task) {
       : "";
   return `
     <article class="task-card" data-task-status="${escapeHtml(task.status)}">
-      <h4>${escapeHtml(task.taskType === "PLAN" ? "教学方案任务" : "教学课件任务")}</h4>
+      <h4>${escapeHtml(task.taskType === "PLAN" ? "教学方案任务" : task.taskType === "EXAM" ? "试卷生成任务" : "教学课件任务")}</h4>
       <div class="task-meta">
         <span class="chip ${statusTone(task.status)}">${escapeHtml(task.status)}</span>
         <span class="chip">进度 ${progress}%</span>
@@ -939,7 +945,9 @@ function renderTaskCard(task) {
 }
 
 function availableExports(task) {
-  return task.taskType === "PLAN" ? ["docx", "html", "md", "json", "pdf"] : ["pptx", "html", "json", "txt", "pdf"];
+  if (task.taskType === "PLAN") return ["docx", "html", "md", "json", "pdf"];
+  if (task.taskType === "EXAM") return ["html", "md", "json", "txt", "docx", "student_md"];
+  return ["pptx", "html", "json", "txt", "pdf"];
 }
 
 function fillCoursewarePlanOptions() {
@@ -1008,6 +1016,42 @@ async function handleCoursewareSubmit(event) {
   } finally {
     setButtonBusy(button, false, "生成教学课件");
   }
+}
+
+async function handleExamSubmit(event) {
+  event.preventDefault();
+  const button = elements["exam-submit"];
+  setButtonBusy(button, true, "生成中...");
+  try {
+    const task = await api("/api/v1/generation/exams", {
+      method: "POST",
+      json: {
+        planId: elements["exam-plan-id"].value,
+      },
+    });
+    mergeTask(task);
+    toast(`已创建试卷任务：${task.taskId}`, "success");
+    setActiveStep("tasks");
+    schedulePolling();
+  } catch (error) {
+    handleError(error);
+  } finally {
+    setButtonBusy(button, false, "生成试卷");
+  }
+}
+
+function fillExamPlanOptions() {
+  const planTasks = state.tasks.filter(
+    (task) => task.taskType === "PLAN" && task.status === "SUCCESS" && task.result?.targetId
+  );
+  elements["exam-plan-id"].innerHTML = planTasks.length
+    ? planTasks
+        .map(
+          (task) =>
+            `<option value="${task.result.targetId}">${escapeHtml(task.result.targetId)} · ${escapeHtml(task.params?.courseName || "")}</option>`
+        )
+        .join("")
+    : `<option value="">暂无可用方案，请先生成教学方案</option>`;
 }
 
 async function handleResourceUpload(event) {
@@ -1451,6 +1495,7 @@ function mergeTask(task, notifyTerminal = false) {
   sortTasks();
   renderTasks();
   fillCoursewarePlanOptions();
+  fillExamPlanOptions();
   updateMetrics();
   if (notifyTerminal && previousStatus !== task.status && TERMINAL_STATUSES.has(task.status)) {
     toast(task.status === "SUCCESS" ? `任务 ${task.taskId} 已完成。` : `任务 ${task.taskId} 执行失败。`, task.status === "SUCCESS" ? "success" : "error");

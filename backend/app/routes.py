@@ -8,6 +8,7 @@ from .services import (
     cancel_task,
     create_user,
     create_courseware_task,
+    create_exam_task,
     create_export,
     create_plan_task,
     create_template,
@@ -138,6 +139,14 @@ def register_routes(app):
         payload = request.get_json(silent=True) or {}
         result = create_courseware_task(user["user_id"], payload)
         return ok(result, "任务已创建")
+
+    @app.post("/api/v1/generation/exams")
+    @require_auth("generation:run")
+    def generate_exam():
+        user = current_user()
+        payload = request.get_json(silent=True) or {}
+        result = create_exam_task(user["user_id"], payload)
+        return ok(result, "试卷生成任务已创建")
 
     @app.get("/api/v1/tasks/<task_id>")
     @require_auth("generation:run")

@@ -153,6 +153,20 @@ CREATE TABLE IF NOT EXISTS t_audit_log (
     detail TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS t_exam_paper (
+    exam_id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    task_id TEXT NOT NULL UNIQUE,
+    course_name TEXT NOT NULL,
+    total_score REAL NOT NULL,
+    question_count INTEGER NOT NULL,
+    config_json TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    preview_path TEXT NOT NULL,
+    validate_status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -318,6 +332,21 @@ POSTGRES_SCHEMA = [
         ip_addr VARCHAR(64),
         result_status VARCHAR(32) NOT NULL,
         detail TEXT,
+        created_at VARCHAR(32) NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS t_exam_paper (
+        exam_id VARCHAR(64) PRIMARY KEY,
+        plan_id VARCHAR(64) NOT NULL,
+        task_id VARCHAR(64) NOT NULL UNIQUE,
+        course_name VARCHAR(255) NOT NULL,
+        total_score DOUBLE PRECISION NOT NULL,
+        question_count INTEGER NOT NULL,
+        config_json TEXT NOT NULL,
+        content_json TEXT NOT NULL,
+        preview_path TEXT NOT NULL,
+        validate_status VARCHAR(32) NOT NULL,
         created_at VARCHAR(32) NOT NULL
     )
     """,
