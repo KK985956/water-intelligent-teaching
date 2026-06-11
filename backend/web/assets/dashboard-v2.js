@@ -83,6 +83,8 @@ document.addEventListener("DOMContentLoaded", () => {
   cacheElements();
   bindEvents();
   restoreSession();
+  initTheme();
+  initSidebarNav();
   refreshSessionUI();
   renderTemplates();
   renderResources();
@@ -94,6 +96,75 @@ document.addEventListener("DOMContentLoaded", () => {
     guardedAction(loadDashboard);
   }
 });
+
+function initTheme() {
+  const saved = localStorage.getItem("water-theme") || "light";
+  document.documentElement.setAttribute("data-theme", saved);
+  updateThemeUI(saved);
+
+  document.getElementById("theme-toggle").addEventListener("click", () => {
+    const current = document.documentElement.getAttribute("data-theme");
+    const next = current === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("water-theme", next);
+    updateThemeUI(next);
+  });
+}
+
+function updateThemeUI(theme) {
+  const icon = document.getElementById("theme-icon");
+  const label = document.getElementById("theme-label");
+  if (theme === "dark") {
+    icon.innerHTML = "&#9788;";
+    label.textContent = "浅色模式";
+  } else {
+    icon.innerHTML = "&#9790;";
+    label.textContent = "深色模式";
+  }
+}
+
+function initSidebarNav() {
+  document.getElementById("sidebar-nav").addEventListener("click", (e) => {
+    const item = e.target.closest(".sidebar-item");
+    if (!item) return;
+    const navId = item.dataset.nav;
+    setActiveSidebarItem(item);
+    showPanelByStep(navId);
+    closeSidebarMobile();
+  });
+
+  document.getElementById("sidebar-toggle").addEventListener("click", () => {
+    document.getElementById("sidebar").classList.toggle("is-open");
+  });
+
+  document.querySelectorAll(".seed-pill").forEach((pill) => {
+    pill.addEventListener("click", () => {
+      const defaultStep = state.availableSteps.length ? state.availableSteps[0].id : "templates";
+      setActiveSidebarItem(document.querySelector(`.sidebar-item[data-nav="${defaultStep}"]`));
+      closeSidebarMobile();
+    });
+  });
+}
+
+function closeSidebarMobile() {
+  if (window.innerWidth <= 820) {
+    document.getElementById("sidebar").classList.remove("is-open");
+  }
+}
+
+function setActiveSidebarItem(item) {
+  document.querySelectorAll(".sidebar-item").forEach((el) => el.classList.remove("is-active"));
+  if (item) item.classList.add("is-active");
+}
+
+function showPanelByStep(stepId) {
+  const step = STEP_DEFS.find((s) => s.id === stepId);
+  if (step && stepAllowed(step)) {
+    state.activeStep = stepId;
+    renderStepNav();
+    renderVisibleStep();
+  }
+}
 
 function cacheElements() {
   const ids = [
@@ -294,6 +365,18 @@ function refreshWorkflow() {
     state.activeStep = state.availableSteps[0].id;
   }
 
+  document.querySelectorAll(".sidebar-item").forEach((item) => {
+    const navId = item.dataset.nav;
+    const isAllowed = isLoggedIn && STEP_DEFS.some((s) => s.id === navId && stepAllowed(s));
+    const hasPanel = Boolean(document.querySelector(`[data-step="${navId}"]:not(.role-hidden)`));
+    item.style.display = isAllowed && hasPanel ? "" : "none";
+    if (navId === state.activeStep) {
+      item.classList.add("is-active");
+    } else {
+      item.classList.remove("is-active");
+    }
+  });
+
   renderStepNav();
   renderVisibleStep();
 }
@@ -343,7 +426,16 @@ function setActiveStep(stepId) {
   state.activeStep = stepId;
   renderStepNav();
   renderVisibleStep();
+  syncSidebarToStep(stepId);
   elements["role-flow"].scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function syncSidebarToStep(stepId) {
+  const sidebarItem = document.querySelector(`.sidebar-item[data-nav="${stepId}"]`);
+  if (sidebarItem) {
+    document.querySelectorAll(".sidebar-item").forEach((el) => el.classList.remove("is-active"));
+    sidebarItem.classList.add("is-active");
+  }
 }
 
 function moveStep(direction) {

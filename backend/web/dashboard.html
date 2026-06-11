@@ -7,22 +7,76 @@
   <link rel="stylesheet" href="/assets/dashboard.css" />
 </head>
 <body>
-  <div class="page-shell">
-    <header class="topbar">
-      <div class="brand-block">
-        <p class="eyebrow">Hydro Teaching Console</p>
-        <h1>水利智能教学应用工作台</h1>
-        <p class="brand-summary">
-          一套围绕模板、方案、课件、资源、校验与导出的水利教学资料生产台。
-        </p>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">W</div>
+      <div class="sidebar-brand">
+        <p>Hydro Teaching</p>
+        <h2>水利智能教学</h2>
       </div>
-      <div class="topbar-actions">
-        <span class="status-pill" id="session-status">未登录</span>
-        <span class="status-pill status-pill--subtle" id="realtime-status">实时通道未连接</span>
-        <button class="ghost-button" id="refresh-dashboard" type="button">刷新工作台</button>
-        <button class="ghost-button danger" id="logout-button" type="button">退出登录</button>
+    </div>
+    <nav class="sidebar-nav" id="sidebar-nav">
+      <div class="sidebar-section">
+        <span class="sidebar-section-label">工作流</span>
+        <button class="sidebar-item is-active" data-nav="templates" type="button">
+          <span class="sidebar-item-icon">&#128196;</span>
+          <span class="sidebar-item-label">模板选择</span>
+        </button>
+        <button class="sidebar-item" data-nav="template-admin" type="button">
+          <span class="sidebar-item-icon">&#128221;</span>
+          <span class="sidebar-item-label">模板维护</span>
+        </button>
+        <button class="sidebar-item" data-nav="plan" type="button">
+          <span class="sidebar-item-icon">&#128218;</span>
+          <span class="sidebar-item-label">教学方案</span>
+        </button>
+        <button class="sidebar-item" data-nav="courseware" type="button">
+          <span class="sidebar-item-icon">&#128202;</span>
+          <span class="sidebar-item-label">教学课件</span>
+        </button>
+        <button class="sidebar-item" data-nav="resources" type="button">
+          <span class="sidebar-item-icon">&#128194;</span>
+          <span class="sidebar-item-label">教学资源</span>
+        </button>
+        <button class="sidebar-item" data-nav="tasks" type="button">
+          <span class="sidebar-item-icon">&#128203;</span>
+          <span class="sidebar-item-label">任务中心</span>
+        </button>
+        <button class="sidebar-item" data-nav="editor" type="button">
+          <span class="sidebar-item-icon">&#9998;</span>
+          <span class="sidebar-item-label">人工编辑</span>
+        </button>
+        <button class="sidebar-item" data-nav="admin" type="button">
+          <span class="sidebar-item-icon">&#9881;</span>
+          <span class="sidebar-item-label">系统管理</span>
+        </button>
       </div>
-    </header>
+    </nav>
+    <div class="sidebar-footer">
+      <button class="theme-toggle" id="theme-toggle" type="button">
+        <span class="theme-toggle-icon" id="theme-icon">&#9790;</span>
+        <span id="theme-label">深色模式</span>
+      </button>
+    </div>
+  </aside>
+
+  <div class="main-wrapper">
+    <div class="page-shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="ghost-button sidebar-toggle" id="sidebar-toggle" type="button">&#9776;</button>
+          <div class="brand-block">
+            <p class="eyebrow">Hydro Teaching Console</p>
+            <h1>水利智能教学应用工作台</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="status-pill" id="session-status">未登录</span>
+          <span class="status-pill status-pill--subtle" id="realtime-status">实时通道未连接</span>
+          <button class="ghost-button" id="refresh-dashboard" type="button">刷新</button>
+          <button class="ghost-button danger" id="logout-button" type="button">退出</button>
+        </div>
+      </header>
 
     <main class="layout">
       <section class="hero-card">
@@ -477,6 +531,7 @@
         </article>
       </section>
     </main>
+  </div>
   </div>
 
   <aside class="toast-stack" id="toast-stack"></aside>
