@@ -36,7 +36,6 @@ backend/storage/
 # Local design reports and private project documents
 *.docx
 *.doc
-*.pptx
 *.ppt
 
 # Logs
