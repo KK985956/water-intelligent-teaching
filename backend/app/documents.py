@@ -484,7 +484,7 @@ def build_courseware_template_context(courseware):
             "总课时": f"{courseware.get('hours', '')} 课时" if courseware.get("hours") else "",
             "课程类型": courseware.get("course_type_label", ""),
             "页数": str(courseware["slide_count"]),
-            "课件摘要": courseware["slides_text"],
+            "课件摘要": context["slides_text"],
             "资源列表": context["resource_names_text"],
             "课程总结": courseware.get("summary", ""),
         }
