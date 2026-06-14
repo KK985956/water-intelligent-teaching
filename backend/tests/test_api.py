@@ -1,0 +1,381 @@
+import io
+import tempfile
+import unittest
+from pathlib import Path
+
+from backend.app import create_app
+
+
+class BackendFlowTestCase(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        root = Path(self.temp_dir.name)
+        self.app = create_app(
+            {
+                "TESTING": True,
+                "SYNC_TASKS": True,
+                "START_WORKER": False,
+                "STORAGE_DIR": root / "storage",
+                "TEMPLATE_DIR": root / "storage" / "templates",
+                "GENERATED_DIR": root / "storage" / "generated",
+                "EXPORT_DIR": root / "storage" / "exports",
+                "RESOURCE_DIR": root / "storage" / "resources",
+                "DATABASE_PATH": root / "storage" / "test.db",
+                "SECRET_KEY": "unit-test-secret",
+            }
+        )
+        self.client = self.app.test_client()
+        self.token = self.login()["token"]
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def auth_headers(self):
+        return {"Authorization": f"Bearer {self.token}"}
+
+    def login(self, username="teacher", password="teacher123"):
+        response = self.client.post(
+            "/api/v1/auth/login",
+            json={"username": username, "password": password, "captcha": "2026"},
+        )
+        self.assertEqual(response.status_code, 200)
+        return response.get_json()["data"]
+
+    def test_plan_to_courseware_flow(self):
+        templates = self.client.get("/api/v1/templates", headers=self.auth_headers())
+        self.assertEqual(templates.status_code, 200)
+        template_list = templates.get_json()["data"]["list"]
+        self.assertGreaterEqual(len(template_list), 2)
+        plan_template = next(item for item in template_list if item["templateType"] == "THEORY")
+        courseware_template = next(item for item in template_list if item["templateType"] == "TRAINING")
+
+        create_plan = self.client.post(
+            "/api/v1/generation/plans",
+            headers=self.auth_headers(),
+            json={
+                "templateId": plan_template["templateId"],
+                "courseName": "水文地质学",
+                "hours": 16,
+                "audience": "本科二年级",
+                "goals": ["掌握水文地质基本概念", "理解地下水运动规律"],
+                "focusPoints": ["地下水补给", "地下水排泄"],
+            },
+        )
+        self.assertEqual(create_plan.status_code, 200)
+        plan_task = create_plan.get_json()["data"]
+        self.assertEqual(plan_task["status"], "SUCCESS")
+        plan_id = plan_task["result"]["targetId"]
+
+        preview = self.client.get(plan_task["result"]["previewUrl"], headers=self.auth_headers())
+        self.assertEqual(preview.status_code, 200)
+        preview.close()
+
+        validation = self.client.post(
+            "/api/v1/validation/format",
+            headers=self.auth_headers(),
+            json={"targetId": plan_id, "targetType": "PLAN"},
+        )
+        self.assertEqual(validation.status_code, 200)
+
+        content_response = self.client.get(f"/api/v1/content/PLAN/{plan_id}", headers=self.auth_headers())
+        self.assertEqual(content_response.status_code, 200)
+        content = content_response.get_json()["data"]["content"]
+        content["summary"] = "人工编辑后的课堂总结"
+        edit_response = self.client.patch(
+            f"/api/v1/content/PLAN/{plan_id}",
+            headers=self.auth_headers(),
+            json={"content": content},
+        )
+        self.assertEqual(edit_response.status_code, 200)
+        edited_preview = self.client.get(edit_response.get_json()["data"]["previewUrl"], headers=self.auth_headers())
+        self.assertEqual(edited_preview.status_code, 200)
+        self.assertIn("人工编辑后的课堂总结", edited_preview.get_data(as_text=True))
+        edited_preview.close()
+
+        create_courseware = self.client.post(
+            "/api/v1/generation/coursewares",
+            headers=self.auth_headers(),
+            json={
+                "planId": plan_id,
+                "coursewareTemplateId": courseware_template["templateId"],
+                "resources": [],
+            },
+        )
+        self.assertEqual(create_courseware.status_code, 200)
+        courseware_task = create_courseware.get_json()["data"]
+        self.assertEqual(courseware_task["status"], "SUCCESS")
+        courseware_id = courseware_task["result"]["targetId"]
+
+        courseware_content = self.client.get(f"/api/v1/content/COURSEWARE/{courseware_id}", headers=self.auth_headers())
+        self.assertEqual(courseware_content.status_code, 200)
+        courseware_payload = courseware_content.get_json()["data"]["content"]
+        courseware_payload["slides"][0]["bullets"].append("人工补充的课件要点")
+        courseware_edit = self.client.patch(
+            f"/api/v1/content/COURSEWARE/{courseware_id}",
+            headers=self.auth_headers(),
+            json={"content": courseware_payload},
+        )
+        self.assertEqual(courseware_edit.status_code, 200)
+        courseware_preview = self.client.get(courseware_edit.get_json()["data"]["previewUrl"], headers=self.auth_headers())
+        self.assertEqual(courseware_preview.status_code, 200)
+        self.assertIn("人工补充的课件要点", courseware_preview.get_data(as_text=True))
+        courseware_preview.close()
+
+        export_response = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": plan_id, "format": "docx", "expiryDays": 3, "shareScope": "private"},
+        )
+        self.assertEqual(export_response.status_code, 200)
+        download_url = export_response.get_json()["data"]["downloadUrl"]
+        download = self.client.get(download_url, headers=self.auth_headers())
+        self.assertEqual(download.status_code, 200)
+        download.close()
+
+        export_html = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": courseware_id, "format": "html", "expiryDays": 3, "shareScope": "public"},
+        )
+        self.assertEqual(export_html.status_code, 200)
+
+        limited_share = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": plan_id, "format": "html", "expiryDays": 3, "shareScope": "public", "maxDownloads": 1},
+        )
+        self.assertEqual(limited_share.status_code, 200)
+        share_url = limited_share.get_json()["data"]["shareUrl"]
+        first_share = self.client.get(share_url)
+        self.assertEqual(first_share.status_code, 200)
+        first_share.close()
+        second_share = self.client.get(share_url)
+        self.assertEqual(second_share.status_code, 410)
+
+    def test_frontend_entry_and_readonly_lists(self):
+        index = self.client.get("/")
+        self.assertEqual(index.status_code, 200)
+        index_html = index.get_data(as_text=True)
+        self.assertIn("水利智能教学应用工作台", index_html)
+        self.assertIn('id="template-upload-form"', index_html)
+        self.assertIn('id="template-version-form"', index_html)
+        index.close()
+
+        runtime = self.client.get("/api/v1/runtime/context", headers=self.auth_headers())
+        self.assertEqual(runtime.status_code, 200)
+        self.assertIn("progressSocket", runtime.get_json()["data"])
+
+        resources = self.client.get("/api/v1/resources", headers=self.auth_headers())
+        self.assertEqual(resources.status_code, 200)
+        self.assertIn("list", resources.get_json()["data"])
+
+        tasks = self.client.get("/api/v1/tasks", headers=self.auth_headers())
+        self.assertEqual(tasks.status_code, 200)
+        self.assertIsInstance(tasks.get_json()["data"], list)
+
+    def test_template_and_resource_upload(self):
+        upload_template = self.client.post(
+            "/api/v1/templates/upload",
+            headers=self.auth_headers(),
+            data={
+                "type": "THEORY",
+                "name": "自定义模板",
+                "rulesJson": "{\"required_sections\":[\"教学目标\",\"教学流程\"]}",
+                "file": (io.BytesIO("## {{ course_name }}".encode("utf-8")), "custom_template.md"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(upload_template.status_code, 200)
+        template_detail = upload_template.get_json()["data"]
+        template_id = template_detail["templateId"]
+        self.assertTrue(template_id.startswith("TPL-"))
+        self.assertEqual(template_detail["templateType"], "THEORY")
+        self.assertIn("course_name", template_detail["placeholders"])
+        self.assertEqual(template_detail["formatRules"]["required_sections"], ["教学目标", "教学流程"])
+
+        upload_resource = self.client.post(
+            "/api/v1/resources/upload",
+            headers=self.auth_headers(),
+            data={
+                "resourceType": "CASE",
+                "tags": "地下水,案例",
+                "file": (io.BytesIO("案例内容".encode("utf-8")), "case.txt"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(upload_resource.status_code, 200)
+        resource_id = upload_resource.get_json()["data"]["resourceId"]
+        self.assertTrue(resource_id.startswith("RES-"))
+
+    def test_exam_flow(self):
+        """从教学方案生成试卷 → 预览 → 导出 → 读取内容。"""
+        # 先通过 API 生成教学方案
+        templates = self.client.get("/api/v1/templates", headers=self.auth_headers())
+        templates_json = templates.get_json()["data"]
+        plan_template = next(item for item in templates_json["list"] if item["templateType"] == "THEORY")
+
+        create_plan = self.client.post(
+            "/api/v1/generation/plans",
+            headers=self.auth_headers(),
+            json={
+                "templateId": plan_template["templateId"],
+                "courseName": "水文地质学",
+                "hours": 16,
+                "audience": "本科二年级",
+                "goals": ["掌握水文地质基本概念", "理解地下水运动规律"],
+                "focusPoints": ["地下水补给与排泄", "含水层特征"],
+            },
+        )
+        self.assertEqual(create_plan.status_code, 200)
+        plan_task = create_plan.get_json()["data"]
+        self.assertEqual(plan_task["status"], "SUCCESS")
+        plan_id = plan_task["result"]["targetId"]
+
+        # 基于方案生成试卷
+        create_exam = self.client.post(
+            "/api/v1/generation/exams",
+            headers=self.auth_headers(),
+            json={"planId": plan_id},
+        )
+        self.assertEqual(create_exam.status_code, 200)
+        exam_task = create_exam.get_json()["data"]
+        self.assertEqual(exam_task["status"], "SUCCESS")
+        self.assertEqual(exam_task["result"]["targetType"], "EXAM")
+        exam_id = exam_task["result"]["targetId"]
+        self.assertGreater(exam_task["result"]["examInfo"]["totalScore"], 0)
+        self.assertGreater(exam_task["result"]["examInfo"]["questionCount"], 0)
+
+        # 读取试卷内容
+        content_resp = self.client.get(f"/api/v1/content/EXAM/{exam_id}", headers=self.auth_headers())
+        self.assertEqual(content_resp.status_code, 200)
+        exam_content = content_resp.get_json()["data"]["content"]
+        self.assertIn("questions", exam_content)
+        self.assertGreater(len(exam_content["questions"]), 0)
+
+        # 验证题型齐全
+        qtypes = {q["type"] for q in exam_content["questions"]}
+        self.assertIn("SINGLE_CHOICE", qtypes)
+        self.assertIn("TRUE_FALSE", qtypes)
+        self.assertIn("FILL_BLANK", qtypes)
+        self.assertIn("SHORT_ANSWER", qtypes)
+        self.assertIn("ESSAY", qtypes)
+
+        # 验证题号连续
+        numbers = [q["number"] for q in exam_content["questions"]]
+        self.assertEqual(numbers, list(range(1, len(numbers) + 1)))
+
+        # 预览试卷
+        preview = self.client.get(exam_task["result"]["previewUrl"], headers=self.auth_headers())
+        self.assertEqual(preview.status_code, 200)
+        preview_html = preview.get_data(as_text=True)
+        self.assertIn(exam_content["course_name"], preview_html)
+        self.assertIn("考试试卷", preview_html)
+        preview.close()
+
+        # 导出试卷为 Markdown
+        export_resp = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": exam_id, "format": "md", "expiryDays": 3, "shareScope": "private"},
+        )
+        self.assertEqual(export_resp.status_code, 200)
+        download_url = export_resp.get_json()["data"]["downloadUrl"]
+        download = self.client.get(download_url, headers=self.auth_headers())
+        self.assertEqual(download.status_code, 200)
+        download_md = download.get_data(as_text=True)
+        self.assertIn(exam_content["course_name"], download_md)
+        download.close()
+
+        # 导出学生版（无答案）
+        export_student = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": exam_id, "format": "student_md", "expiryDays": 3, "shareScope": "public"},
+        )
+        self.assertEqual(export_student.status_code, 200)
+
+        # 导出 JSON
+        export_json = self.client.post(
+            "/api/v1/exports",
+            headers=self.auth_headers(),
+            json={"targetId": exam_id, "format": "json", "expiryDays": 3, "shareScope": "private"},
+        )
+        self.assertEqual(export_json.status_code, 200)
+
+    def test_template_version_rollback_and_user_admin(self):
+        admin_token = self.login("admin", "admin123")["token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        upload_template = self.client.post(
+            "/api/v1/templates/upload",
+            headers=admin_headers,
+            data={
+                "type": "THEORY",
+                "name": "版本化模板",
+                "rulesJson": "{\"required_sections\":[\"教学目标\",\"教学流程\"]}",
+                "file": (io.BytesIO("## {{ course_name }}".encode("utf-8")), "versioned_template.md"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(upload_template.status_code, 200)
+        template_id = upload_template.get_json()["data"]["templateId"]
+        self.assertEqual(upload_template.get_json()["data"]["versionNo"], 1)
+
+        upload_version = self.client.post(
+            f"/api/v1/templates/{template_id}/versions",
+            headers=admin_headers,
+            data={
+                "changeLog": "补充授课对象占位符",
+                "file": (io.BytesIO("## {{ course_name }}\n{{ audience }}".encode("utf-8")), "versioned_template_v2.md"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(upload_version.status_code, 200)
+        version_detail = upload_version.get_json()["data"]
+        self.assertEqual(version_detail["versionNo"], 2)
+        self.assertEqual(len(version_detail["versionHistory"]), 2)
+
+        rollback = self.client.post(
+            f"/api/v1/templates/{template_id}/rollback",
+            headers=admin_headers,
+            json={"versionNo": 1},
+        )
+        self.assertEqual(rollback.status_code, 200)
+        self.assertEqual(rollback.get_json()["data"]["versionNo"], 1)
+
+        roles = self.client.get("/api/v1/roles", headers=admin_headers)
+        self.assertEqual(roles.status_code, 200)
+        self.assertGreaterEqual(len(roles.get_json()["data"]), 3)
+
+        create_user = self.client.post(
+            "/api/v1/users",
+            headers=admin_headers,
+            json={
+                "username": "teacher02",
+                "password": "teacher02",
+                "realName": "新教师",
+                "dept": "水利工程系",
+                "roleCode": "TEACHER",
+                "status": 1,
+            },
+        )
+        self.assertEqual(create_user.status_code, 200)
+        user_id = create_user.get_json()["data"]["userId"]
+
+        update_user = self.client.patch(
+            f"/api/v1/users/{user_id}",
+            headers=admin_headers,
+            json={"dept": "教学研究室", "status": 0},
+        )
+        self.assertEqual(update_user.status_code, 200)
+        self.assertEqual(update_user.get_json()["data"]["dept"], "教学研究室")
+        self.assertEqual(update_user.get_json()["data"]["status"], 0)
+
+        audit_logs = self.client.get("/api/v1/audit-logs?size=10", headers=admin_headers)
+        self.assertEqual(audit_logs.status_code, 200)
+        audit_items = audit_logs.get_json()["data"]["list"]
+        self.assertTrue(any(item["action"] == "USER_UPDATE" for item in audit_items))
+
+
+if __name__ == "__main__":
+    unittest.main()
