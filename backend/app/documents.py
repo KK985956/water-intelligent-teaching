@@ -407,7 +407,7 @@ def teaching_plan_lines(plan):
 
 
 def build_courseware(plan, template_meta, resource_items):
-    resource_names = [res["resource_name"] for res in resource_items]
+    resource_names = [res.get("resourceName") or res.get("resource_name") or "" for res in resource_items]
     slides = [
         {
             "title": plan["course_name"],
