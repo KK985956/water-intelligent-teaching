@@ -6,7 +6,7 @@
   <title>水利智能教学应用工作台</title>
   <link rel="stylesheet" href="/assets/dashboard.css" />
 </head>
-<body>
+<body class="is-auth-view">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div class="sidebar-logo">W</div>
@@ -79,57 +79,76 @@
       </header>
 
     <main class="layout">
-      <section class="hero-card">
+      <section class="hero-card auth-hero">
         <div class="hero-copy">
+          <div class="auth-badge-row">
+            <span class="auth-badge">水利教学智能工作台</span>
+            <span class="auth-badge auth-badge--soft">本地演示环境</span>
+          </div>
           <p class="eyebrow">Template · Generate · Validate · Export</p>
-          <h2>把设计文档真正推向可生成、可校验、可预览、可导出的教学操作现场。</h2>
+          <h2>从登录开始，进入完整的教学资料生成流程。</h2>
           <p class="hero-text">
-            登录后就能从模板出发，生成水利教学方案、继续装配教学课件、上传资源、执行格式校验，并完成导出分享。
+            面向水利类课程的方案生成、课件装配、资源维护、在线校验与导出分享都集中在一个工作台里。
+            根据不同账号角色，系统会自动呈现可用的操作步骤。
           </p>
 
-          <div class="workflow-ribbon">
-            <article class="workflow-step">
-              <span class="workflow-index">01</span>
+          <div class="auth-insight-grid" aria-label="核心能力">
+            <article class="auth-insight">
+              <span class="auth-insight-icon">01</span>
               <div>
-                <strong>模板筛选</strong>
-                <p>快速锁定理论课、实训课、培训课模板。</p>
+                <strong>模板驱动</strong>
+                <p>统一理论课、实训课、培训课的内容结构。</p>
               </div>
             </article>
-            <article class="workflow-step">
-              <span class="workflow-index">02</span>
+            <article class="auth-insight">
+              <span class="auth-insight-icon">02</span>
               <div>
-                <strong>方案生成</strong>
-                <p>自动组织教学目标、流程、案例与练习。</p>
+                <strong>角色权限</strong>
+                <p>教师、管理员、学生进入后看到不同功能边界。</p>
               </div>
             </article>
-            <article class="workflow-step">
-              <span class="workflow-index">03</span>
+            <article class="auth-insight">
+              <span class="auth-insight-icon">03</span>
               <div>
-                <strong>课件装配</strong>
-                <p>从已成功的方案继续生成多页课件结构。</p>
-              </div>
-            </article>
-            <article class="workflow-step">
-              <span class="workflow-index">04</span>
-              <div>
-                <strong>校验导出</strong>
-                <p>在线预览结果并完成导出与分享。</p>
+                <strong>结果闭环</strong>
+                <p>生成、预览、校验、导出在同一页面完成。</p>
               </div>
             </article>
           </div>
 
-          <div class="seed-grid">
-            <button class="seed-pill" data-username="teacher" data-password="teacher123" data-captcha="2026" type="button">教师账号</button>
-            <button class="seed-pill" data-username="admin" data-password="admin123" data-captcha="2026" type="button">管理员账号</button>
-            <button class="seed-pill" data-username="student" data-password="student123" data-captcha="2026" type="button">学生账号</button>
+          <div class="auth-preview-panel" aria-label="登录后流程预览">
+            <div class="auth-preview-head">
+              <span>登录后流程</span>
+              <strong>4 步完成</strong>
+            </div>
+            <div class="auth-preview-track">
+              <span>选模板</span>
+              <span>生成方案</span>
+              <span>装配课件</span>
+              <span>校验导出</span>
+            </div>
           </div>
         </div>
 
         <form class="login-card" id="login-form">
           <div class="card-head">
-            <span class="card-tag">Demo Access</span>
-            <h3>进入系统</h3>
-            <p>使用后端内置账号，立即进入当前工作台。</p>
+            <span class="card-tag">Secure Access</span>
+            <h3>登录工作台</h3>
+            <p>选择演示账号或手动输入账号密码。</p>
+          </div>
+          <div class="seed-grid" aria-label="演示账号">
+            <button class="seed-pill is-active" data-username="teacher" data-password="teacher123" data-captcha="2026" type="button">
+              <strong>教师</strong>
+              <span>生成方案与课件</span>
+            </button>
+            <button class="seed-pill" data-username="admin" data-password="admin123" data-captcha="2026" type="button">
+              <strong>管理员</strong>
+              <span>用户与模板管理</span>
+            </button>
+            <button class="seed-pill" data-username="student" data-password="student123" data-captcha="2026" type="button">
+              <strong>学生</strong>
+              <span>浏览与学习入口</span>
+            </button>
           </div>
           <label>
             <span>用户名</span>
@@ -137,13 +156,19 @@
           </label>
           <label>
             <span>密码</span>
-            <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="teacher123" required />
+            <div class="password-field">
+              <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="teacher123" required />
+              <button class="field-action" id="toggle-password" type="button" aria-label="显示密码">显示</button>
+            </div>
           </label>
           <label>
             <span>验证码</span>
-            <input id="login-captcha" name="captcha" placeholder="2026" required />
+            <div class="captcha-field">
+              <input id="login-captcha" name="captcha" inputmode="numeric" placeholder="2026" required />
+              <span class="captcha-code">2026</span>
+            </div>
           </label>
-          <p class="form-note">系统已预置教师、管理员、学生三种角色，可直接体验不同权限边界。</p>
+          <p class="form-note" id="login-helper">演示验证码固定为 2026，教师账号已默认填入。</p>
           <button class="primary-button" id="login-submit" type="submit">进入工作台</button>
         </form>
       </section>

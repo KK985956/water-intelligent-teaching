@@ -85,6 +85,7 @@ document.addEventListener("DOMContentLoaded", () => {
   restoreSession();
   initTheme();
   initSidebarNav();
+  fillLoginFromSeed(document.querySelector(".seed-pill.is-active"));
   refreshSessionUI();
   renderTemplates();
   renderResources();
@@ -177,6 +178,8 @@ function cacheElements() {
     "login-password",
     "login-captcha",
     "login-submit",
+    "toggle-password",
+    "login-helper",
     "metrics-strip",
     "role-flow",
     "step-title",
@@ -301,11 +304,32 @@ function bindEvents() {
 
   document.querySelectorAll(".seed-pill").forEach((button) => {
     button.addEventListener("click", () => {
-      elements["login-username"].value = button.dataset.username || "";
-      elements["login-password"].value = button.dataset.password || "";
-      elements["login-captcha"].value = button.dataset.captcha || "";
+      fillLoginFromSeed(button);
     });
   });
+
+  elements["toggle-password"].addEventListener("click", togglePasswordVisibility);
+}
+
+function fillLoginFromSeed(button) {
+  if (!button) return;
+  document.querySelectorAll(".seed-pill").forEach((item) => item.classList.remove("is-active"));
+  button.classList.add("is-active");
+  elements["login-username"].value = button.dataset.username || "";
+  elements["login-password"].value = button.dataset.password || "";
+  elements["login-captcha"].value = button.dataset.captcha || "";
+  elements["login-helper"].textContent = `已填入${button.querySelector("strong")?.textContent || "演示"}账号，可直接进入工作台。`;
+  elements["login-helper"].classList.remove("is-error");
+}
+
+function togglePasswordVisibility() {
+  const input = elements["login-password"];
+  const button = elements["toggle-password"];
+  const shouldShow = input.type === "password";
+  input.type = shouldShow ? "text" : "password";
+  button.textContent = shouldShow ? "隐藏" : "显示";
+  button.setAttribute("aria-label", shouldShow ? "隐藏密码" : "显示密码");
+  input.focus();
 }
 
 function restoreSession() {
@@ -452,6 +476,8 @@ function handleStepNavClick(event) {
 
 function refreshSessionUI() {
   const isLoggedIn = Boolean(state.token && state.user);
+  document.body.classList.toggle("is-auth-view", !isLoggedIn);
+  document.body.classList.toggle("is-workspace-view", isLoggedIn);
   elements["session-status"].textContent = isLoggedIn
     ? `${state.user.realName} · ${state.user.roleCode}`
     : "未登录";
@@ -565,6 +591,8 @@ function toast(message, type = "info") {
 async function handleLogin(event) {
   event.preventDefault();
   const submit = elements["login-submit"];
+  elements["login-helper"].textContent = "正在校验账号并加载权限...";
+  elements["login-helper"].classList.remove("is-error");
   setButtonBusy(submit, true, "登录中...");
   try {
     const data = await api("/api/v1/auth/login", {
@@ -583,6 +611,8 @@ async function handleLogin(event) {
     toast("登录成功，正在加载工作台。", "success");
     await loadDashboard();
   } catch (error) {
+    elements["login-helper"].textContent = error?.payload?.message || error?.message || "登录失败，请检查账号、密码或验证码。";
+    elements["login-helper"].classList.add("is-error");
     handleError(error);
   } finally {
     setButtonBusy(submit, false, "进入工作台");
