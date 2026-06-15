@@ -4,6 +4,7 @@ from urllib.request import Request, urlopen
 
 from flask import current_app
 
+from .ai_generation import build_courseware_with_ai
 from .documents import build_courseware, build_teaching_plan, validate_courseware, validate_plan
 from .errors import ServiceError
 
@@ -61,6 +62,9 @@ def generate_courseware(plan, template_meta, resources):
     )
     if remote_result is not None:
         return remote_result["courseware"]
+    ai_result = build_courseware_with_ai(plan, template_meta, resources)
+    if ai_result is not None:
+        return ai_result
     return build_courseware(plan, template_meta, resources)
 
 

@@ -1,9 +1,27 @@
 import os
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+ENV_FILE = BASE_DIR / ".env"
+if load_dotenv:
+    load_dotenv(ENV_FILE, override=False)
+elif ENV_FILE.exists():
+    for raw_line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
 
 class Config:
-    BASE_DIR = Path(__file__).resolve().parent.parent
+    BASE_DIR = BASE_DIR
     DATA_DIR = BASE_DIR / "data"
     STORAGE_DIR = BASE_DIR / "storage"
     TEMPLATE_DIR = STORAGE_DIR / "templates"
@@ -16,6 +34,12 @@ class Config:
     GENERATION_SERVICE_URL = os.getenv("WATER_GENERATION_SERVICE_URL", "")
     GENERATION_SERVICE_TIMEOUT_SECONDS = int(os.getenv("WATER_GENERATION_SERVICE_TIMEOUT_SECONDS", "30"))
     GENERATION_SERVICE_PORT = int(os.getenv("WATER_GENERATION_SERVICE_PORT", "5001"))
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+    AI_COURSEWARE_ENABLED = os.getenv("WATER_AI_COURSEWARE_ENABLED", "0") == "1"
+    OPENAI_TEXT_MODEL = os.getenv("WATER_OPENAI_TEXT_MODEL", "gpt-4.1-mini")
+    OPENAI_IMAGE_MODEL = os.getenv("WATER_OPENAI_IMAGE_MODEL", "gpt-image-1")
+    OPENAI_IMAGE_ENABLED = os.getenv("WATER_OPENAI_IMAGE_ENABLED", "0") == "1"
     SECRET_KEY = os.getenv("WATER_SECRET_KEY", "water-teaching-dev-secret")
     TOKEN_TTL_SECONDS = int(os.getenv("WATER_TOKEN_TTL_SECONDS", "43200"))
     DEMO_CAPTCHA = os.getenv("WATER_DEMO_CAPTCHA", "2026")

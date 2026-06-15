@@ -12,6 +12,7 @@ from werkzeug.datastructures import FileStorage
 
 from .auth import hash_password, issue_token, verify_password
 from .database import execute, fetch_all, fetch_one, init_db
+from .ai_generation import generate_slide_image
 from .documents import (
     build_courseware_template_context,
     build_docx,
@@ -37,8 +38,11 @@ from .generation_client import (
     validate_generated_courseware,
     validate_generated_plan,
 )
-from .office import docx_to_pdf, fill_ppt_template, fill_word_template, html_to_pdf, pptx_to_pdf, slides_to_pptx
+from .office import count_pptx_slides, docx_to_pdf, fill_ppt_template, fill_word_template, html_to_pdf, pptx_to_pdf, slides_to_pptx
 from .realtime import bootstrap_progress_socket, notify_user, progress_socket_settings
+
+
+OPEN_SOURCE_PPT_TEMPLATE_DIR = "open_source_ppt_templates"
 
 
 ROLE_SEEDS = [
@@ -458,6 +462,83 @@ def _copy_seed_template(source_name, target_name):
     return target
 
 
+def _copy_seed_template_file(source_path, target_name):
+    target = Path(current_app.config["TEMPLATE_DIR"]) / target_name
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_path, target)
+    return target
+
+
+def _build_open_source_ppt_seed_templates():
+    template_dir = Path(current_app.config["DATA_DIR"]) / OPEN_SOURCE_PPT_TEMPLATE_DIR
+    if not template_dir.exists():
+        return []
+
+    seed_templates = []
+    for index, source_path in enumerate(sorted(template_dir.glob("*.pptx")), start=1):
+        target_name = f"{OPEN_SOURCE_PPT_TEMPLATE_DIR}/{source_path.name}"
+        file_path = _copy_seed_template_file(source_path, target_name)
+        display_name = source_path.stem.replace("_", " ").replace("-", " ")
+        seed_templates.append(
+            (
+                f"TPL-PPT-{index:03d}",
+                f"Open Source PPT - {display_name}",
+                "TRAINING",
+                str(file_path),
+                DEFAULT_TEMPLATE_RULES["TRAINING"],
+                "MIT licensed pptx-automizer sample template",
+            )
+        )
+    return seed_templates
+
+
+def _ensure_seed_template(template_id, template_name, template_type, file_path, rules, change_log, creator_id):
+    existing = fetch_one("SELECT template_id FROM t_template WHERE template_id = ?", (template_id,))
+    if existing:
+        return
+
+    preview_text = extract_template_text(file_path)
+    placeholders = extract_placeholders(preview_text)
+    execute(
+        """
+        INSERT INTO t_template(template_id, template_name, template_type, file_path, version_no,
+            format_rule_json, placeholder_json, preview_text, creator_id, status, created_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 1, ?)
+        """,
+        (
+            template_id,
+            template_name,
+            template_type,
+            file_path,
+            json_dumps(rules),
+            json_dumps(placeholders),
+            preview_text,
+            creator_id,
+            now_text(),
+        ),
+    )
+    execute(
+        """
+        INSERT INTO t_template_version(
+            template_id, version_no, file_path, template_name, format_rule_json, placeholder_json,
+            preview_text, change_log, is_current, created_at
+        )
+        VALUES (?, 1, ?, ?, ?, ?, ?, ?, 1, ?)
+        """,
+        (
+            template_id,
+            file_path,
+            template_name,
+            json_dumps(rules),
+            json_dumps(placeholders),
+            preview_text,
+            change_log,
+            now_text(),
+        ),
+    )
+
+
 def record_audit(user_id, action, target_type, target_id, result_status, detail="", ip_addr=""):
     execute(
         """
@@ -527,6 +608,7 @@ def seed_defaults():
                 "THEORY",
                 str(plan_path),
                 DEFAULT_TEMPLATE_RULES["THEORY"],
+                "Built-in seed template",
             ),
             (
                 "TPL-2026-101",
@@ -534,9 +616,11 @@ def seed_defaults():
                 "TRAINING",
                 str(courseware_path),
                 DEFAULT_TEMPLATE_RULES["TRAINING"],
+                "Built-in seed template",
             ),
         ]
-        for template_id, template_name, template_type, file_path, rules in seed_templates:
+        seed_templates = _build_open_source_ppt_seed_templates() + seed_templates
+        for template_id, template_name, template_type, file_path, rules, change_log in seed_templates:
             preview_text = extract_template_text(file_path)
             execute(
                 """
@@ -575,6 +659,11 @@ def seed_defaults():
                     now_text(),
                 ),
             )
+
+    teacher = fetch_one("SELECT user_id FROM t_user WHERE username = 'teacher'")
+    if teacher:
+        for template_id, template_name, template_type, file_path, rules, change_log in _build_open_source_ppt_seed_templates():
+            _ensure_seed_template(template_id, template_name, template_type, file_path, rules, change_log, teacher["user_id"])
 
 
 def bootstrap(app):
@@ -649,7 +738,10 @@ def list_templates(template_type=None, keyword=None, page=1, size=10):
         f"""
         SELECT * FROM t_template
         WHERE {where_clause}
-        ORDER BY created_at DESC
+        ORDER BY
+            CASE WHEN template_id LIKE 'TPL-2026-%' THEN 0 ELSE 1 END,
+            created_at DESC,
+            template_id ASC
         LIMIT ? OFFSET ?
         """,
         tuple(params),
@@ -1381,7 +1473,9 @@ def _build_courseware_presentation(template_meta, courseware, result_dir):
     if template_path.suffix.lower() in {".ppt", ".pptx"}:
         try:
             fill_ppt_template(template_path, pptx_path, _office_placeholder_map(build_courseware_template_context(courseware)))
-            return pptx_path, warning
+            if count_pptx_slides(pptx_path) == courseware["slide_count"]:
+                return pptx_path, warning
+            warning = f"模板页数 {count_pptx_slides(pptx_path)} 与课件页数 {courseware['slide_count']} 不一致"
         except Exception as exc:
             warning = str(exc)
 
@@ -1394,6 +1488,29 @@ def _build_courseware_presentation(template_meta, courseware, result_dir):
         else:
             warning = str(exc)
         return None, warning
+
+
+def _generate_courseware_images(courseware, result_dir):
+    if not current_app.config.get("OPENAI_IMAGE_ENABLED"):
+        return []
+
+    warnings = []
+    images_dir = Path(result_dir) / "images"
+    for index, slide in enumerate(courseware.get("slides", []), start=1):
+        prompt = str(slide.get("image_prompt") or "").strip()
+        if not prompt:
+            continue
+        output_path = images_dir / f"slide-{index:02d}.png"
+        try:
+            image_path = generate_slide_image(prompt, output_path)
+        except Exception as exc:
+            warnings.append(f"第 {index} 页生图失败：{exc}")
+            continue
+        if image_path:
+            slide["image_path"] = str(image_path)
+        else:
+            warnings.append(f"第 {index} 页未生成图片")
+    return warnings
 
 
 def _build_plan_result(task):
@@ -1483,6 +1600,7 @@ def _build_courseware_result(task):
     courseware = generate_courseware(plan, template_meta, resources)
 
     result_dir = _ensure_result_dir(task["task_id"])
+    image_warnings = _generate_courseware_images(courseware, result_dir)
     preview_path = result_dir / "courseware_preview.html"
     json_path = result_dir / "courseware.json"
     outline_path = result_dir / "courseware_outline.txt"
@@ -1530,8 +1648,12 @@ def _build_courseware_result(task):
         },
         "templateMode": "office-template" if Path(template_meta["filePath"]).suffix.lower() in {".ppt", ".pptx"} else "generated-deck",
     }
+    warnings = []
     if presentation_warning:
-        result_meta["warnings"] = [presentation_warning]
+        warnings.append(presentation_warning)
+    warnings.extend(image_warnings)
+    if warnings:
+        result_meta["warnings"] = warnings
     return result_meta, str(presentation_path or json_path)
 
 

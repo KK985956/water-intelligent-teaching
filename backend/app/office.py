@@ -1,6 +1,8 @@
-import json
+﻿import json
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 
@@ -57,10 +59,21 @@ def _write_json_file(data):
         return Path(json_file.name)
 
 
+def count_pptx_slides(pptx_path):
+    try:
+        with zipfile.ZipFile(pptx_path) as archive:
+            root = ET.fromstring(archive.read("docProps/app.xml"))
+            namespace = {"ep": "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"}
+            slides = root.find("ep:Slides", namespace)
+            return int(slides.text) if slides is not None and slides.text else 0
+    except Exception:
+        return 0
+
+
 def html_to_pdf(html_path, output_path):
     browser = find_browser()
     if browser is None:
-        raise RuntimeError("未找到 Edge 或 Chrome，无法执行 HTML 转 PDF。")
+        raise RuntimeError("Edge or Chrome is required to export HTML to PDF")
 
     html_path = Path(html_path).resolve()
     output_path = Path(output_path).resolve()
@@ -90,7 +103,7 @@ def html_to_pdf(html_path, output_path):
             check=False,
         )
         if result.returncode != 0 or not output_path.exists():
-            raise RuntimeError((result.stderr or result.stdout or "浏览器未输出 PDF").strip())
+            raise RuntimeError((result.stderr or result.stdout or "Browser did not output PDF").strip())
         return output_path
 
 
@@ -107,6 +120,46 @@ $ErrorActionPreference = 'Stop'
 $slides = Get-Content -Raw -Encoding UTF8 -LiteralPath $JsonPath | ConvertFrom-Json
 $ppt = $null
 $presentation = $null
+
+function Add-TextBox($slide, $text, $left, $top, $width, $height, $fontSize, $bold, $color) {
+    if ([string]::IsNullOrWhiteSpace([string]$text)) { return $null }
+    $shape = $slide.Shapes.AddTextbox(1, $left, $top, $width, $height)
+    $shape.TextFrame.TextRange.Text = [string]$text
+    $shape.TextFrame.TextRange.Font.Size = $fontSize
+    $shape.TextFrame.TextRange.Font.Name = 'Microsoft YaHei'
+    $shape.TextFrame.TextRange.Font.Color.RGB = $color
+    if ($bold) { $shape.TextFrame.TextRange.Font.Bold = -1 }
+    return $shape
+}
+
+function Add-FilledBox($slide, $left, $top, $width, $height, $fillColor, $lineColor) {
+    $box = $slide.Shapes.AddShape(1, $left, $top, $width, $height)
+    $box.Fill.ForeColor.RGB = $fillColor
+    $box.Line.ForeColor.RGB = $lineColor
+    return $box
+}
+
+function Join-Bullets($bullets) {
+    $bodyText = ''
+    foreach ($line in $bullets) {
+        if ([string]::IsNullOrWhiteSpace([string]$line)) { continue }
+        if ($bodyText.Length -gt 0) { $bodyText += [Environment]::NewLine }
+        $bodyText += "- " + [string]$line
+    }
+    return $bodyText
+}
+
+function Add-ImagePanel($slide, $slideData, $left, $top, $width, $height) {
+    $imagePath = [string]$slideData.image_path
+    if (-not [string]::IsNullOrWhiteSpace($imagePath) -and (Test-Path -LiteralPath $imagePath)) {
+        $slide.Shapes.AddPicture($imagePath, $false, $true, $left, $top, $width, $height) | Out-Null
+        return
+    }
+    Add-FilledBox $slide $left $top $width $height 15921906 10079487 | Out-Null
+    Add-TextBox $slide 'AI image prompt' ($left + 18) ($top + 18) ($width - 36) 28 13 $true 5066061 | Out-Null
+    Add-TextBox $slide ([string]$slideData.image_prompt) ($left + 18) ($top + 58) ($width - 36) ($height - 78) 15 $false 2631720 | Out-Null
+}
+
 try {
     $ppt = New-Object -ComObject PowerPoint.Application
     $ppt.Visible = -1
@@ -115,20 +168,68 @@ try {
         $presentation.Slides.Item(1).Delete()
     }
     foreach ($slideData in $slides) {
-        $slide = $presentation.Slides.Add($presentation.Slides.Count + 1, 2)
+        $slide = $presentation.Slides.Add($presentation.Slides.Count + 1, 12)
+        $layout = [string]$slideData.layout
         $titleText = [string]$slideData.title
-        $slide.Shapes.Title.TextFrame.TextRange.Text = $titleText
-        $bodyText = ''
-        foreach ($line in $slideData.bullets) {
-            if ([string]::IsNullOrWhiteSpace([string]$line)) { continue }
-            if ($bodyText.Length -gt 0) { $bodyText += [Environment]::NewLine }
-            $bodyText += [string]$line
-        }
-        if ($slide.Shapes.Placeholders.Count -ge 2) {
-            $slide.Shapes.Placeholders.Item(2).TextFrame.TextRange.Text = $bodyText
+        $subtitle = [string]$slideData.subtitle
+        $bodyText = Join-Bullets $slideData.bullets
+        $notes = [string]$slideData.speaker_notes
+
+        Add-FilledBox $slide 0 0 720 405 16448250 16448250 | Out-Null
+
+        if ($layout -eq 'cover') {
+            Add-FilledBox $slide 0 0 720 405 13785622 13785622 | Out-Null
+            Add-TextBox $slide $titleText 58 96 590 90 34 $true 2631720 | Out-Null
+            Add-TextBox $slide $subtitle 60 184 560 42 19 $false 5066061 | Out-Null
+            Add-TextBox $slide $bodyText 64 250 520 90 17 $false 2631720 | Out-Null
+            Add-TextBox $slide ([string]$slideData.image_prompt) 64 350 560 28 12 $false 6710886 | Out-Null
+        } elseif ($layout -eq 'image_right') {
+            Add-TextBox $slide $titleText 42 34 380 48 26 $true 2631720 | Out-Null
+            Add-TextBox $slide $subtitle 44 78 380 30 14 $false 6710886 | Out-Null
+            Add-TextBox $slide $bodyText 52 122 315 175 18 $false 2631720 | Out-Null
+            Add-ImagePanel $slide $slideData 420 76 244 210
+        } elseif ($layout -eq 'process') {
+            Add-TextBox $slide $titleText 42 30 600 42 25 $true 2631720 | Out-Null
+            $items = @($slideData.bullets)
+            $count = [Math]::Max(1, $items.Count)
+            $boxWidth = [Math]::Min(148, [Math]::Floor(600 / $count) - 8)
+            for ($i = 0; $i -lt $items.Count; $i++) {
+                $left = 50 + ($i * ($boxWidth + 14))
+                Add-FilledBox $slide $left 145 $boxWidth 118 15134930 10079487 | Out-Null
+                Add-TextBox $slide ([string]($i + 1)) ($left + 12) 155 28 30 22 $true 2631720 | Out-Null
+                Add-TextBox $slide ([string]$items[$i]) ($left + 16) 194 ($boxWidth - 30) 58 14 $false 2631720 | Out-Null
+            }
+            Add-TextBox $slide ([string]$slideData.image_prompt) 54 315 600 34 12 $false 6710886 | Out-Null
+        } elseif ($layout -eq 'case_card') {
+            Add-TextBox $slide $titleText 42 30 600 42 25 $true 2631720 | Out-Null
+            Add-FilledBox $slide 54 100 590 210 16777215 10079487 | Out-Null
+            Add-TextBox $slide $subtitle 76 118 520 30 15 $true 5066061 | Out-Null
+            Add-TextBox $slide $bodyText 78 160 500 120 17 $false 2631720 | Out-Null
+            Add-TextBox $slide ([string]$slideData.image_prompt) 76 324 520 30 12 $false 6710886 | Out-Null
+        } elseif ($layout -eq 'summary') {
+            Add-TextBox $slide $titleText 42 30 600 42 27 $true 2631720 | Out-Null
+            $items = @($slideData.bullets)
+            for ($i = 0; $i -lt $items.Count; $i++) {
+                $top = 96 + ($i * 56)
+                Add-FilledBox $slide 62 $top 560 42 15134930 10079487 | Out-Null
+                Add-TextBox $slide ([string]$items[$i]) 82 ($top + 10) 520 26 16 $false 2631720 | Out-Null
+            }
+            Add-TextBox $slide $notes 64 345 560 28 12 $false 6710886 | Out-Null
         } else {
-            $textbox = $slide.Shapes.AddTextbox(1, 60, 140, 620, 280)
-            $textbox.TextFrame.TextRange.Text = $bodyText
+            Add-TextBox $slide $titleText 42 34 600 48 26 $true 2631720 | Out-Null
+            Add-TextBox $slide $subtitle 44 78 580 30 14 $false 6710886 | Out-Null
+            if ($layout -eq 'two_column') {
+                Add-TextBox $slide $bodyText 52 130 280 180 17 $false 2631720 | Out-Null
+                Add-FilledBox $slide 380 124 245 170 15134930 10079487 | Out-Null
+                Add-TextBox $slide ([string]$slideData.image_prompt) 400 146 205 105 14 $false 2631720 | Out-Null
+            } else {
+                Add-TextBox $slide $bodyText 58 128 560 190 18 $false 2631720 | Out-Null
+                Add-TextBox $slide ([string]$slideData.image_prompt) 60 330 560 28 12 $false 6710886 | Out-Null
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($notes) -and $layout -ne 'summary') {
+            Add-TextBox $slide $notes 46 366 620 24 10 $false 6710886 | Out-Null
         }
     }
     $presentation.SaveAs($OutputPath, 24)
@@ -151,7 +252,7 @@ finally {
             script,
             [json_path, output_path],
             timeout=90,
-            failure_message="PowerPoint 未成功生成课件",
+            failure_message="PowerPoint did not generate courseware",
             expected_output=output_path,
         )
     finally:
@@ -226,7 +327,7 @@ finally {
             script,
             [template_path, output_path, replacement_path],
             timeout=180,
-            failure_message="Word 模板填充失败",
+            failure_message="Word template fill failed",
             expected_output=output_path,
         )
     finally:
@@ -300,7 +401,7 @@ finally {
             script,
             [template_path, output_path, replacement_path],
             timeout=180,
-            failure_message="PowerPoint 模板填充失败",
+            failure_message="PowerPoint template fill failed",
             expected_output=output_path,
         )
     finally:
@@ -342,7 +443,7 @@ finally {
         script,
         [Path(docx_path).resolve(), output_path],
         timeout=180,
-        failure_message="Word 未成功导出 PDF",
+        failure_message="Word did not export PDF",
         expected_output=output_path,
     )
 
@@ -381,6 +482,6 @@ finally {
         script,
         [Path(pptx_path).resolve(), output_path],
         timeout=180,
-        failure_message="PowerPoint 未成功导出 PDF",
+        failure_message="PowerPoint did not export PDF",
         expected_output=output_path,
     )
