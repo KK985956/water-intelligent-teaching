@@ -1,9 +1,18 @@
 import io
+import importlib
+import json
+import os
 import tempfile
 import unittest
+import zipfile
+import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 from pathlib import Path
 
 from backend.app import create_app
+from backend.app.database import execute
+from backend.app.office import slides_to_pptx
+from backend.app.services import seed_defaults
 
 
 class BackendFlowTestCase(unittest.TestCase):
@@ -33,6 +42,24 @@ class BackendFlowTestCase(unittest.TestCase):
     def auth_headers(self):
         return {"Authorization": f"Bearer {self.token}"}
 
+    def count_pptx_slides(self, file_path):
+        with zipfile.ZipFile(file_path) as archive:
+            root = ET.fromstring(archive.read("docProps/app.xml"))
+            namespace = {"ep": "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"}
+            slides = root.find("ep:Slides", namespace)
+            return int(slides.text) if slides is not None and slides.text else 0
+
+    def extract_pptx_text(self, file_path):
+        texts = []
+        with zipfile.ZipFile(file_path) as archive:
+            for name in archive.namelist():
+                if name.startswith("ppt/slides/slide") and name.endswith(".xml"):
+                    root = ET.fromstring(archive.read(name))
+                    for node in root.iter():
+                        if node.text and node.tag.endswith("}t"):
+                            texts.append(node.text)
+        return "\n".join(texts)
+
     def login(self, username="teacher", password="teacher123"):
         response = self.client.post(
             "/api/v1/auth/login",
@@ -40,6 +67,217 @@ class BackendFlowTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         return response.get_json()["data"]
+
+    def test_openai_config_defaults_keep_local_courseware_available(self):
+        self.app.config["OPENAI_API_KEY"] = ""
+        self.app.config["AI_COURSEWARE_ENABLED"] = False
+        self.app.config["OPENAI_IMAGE_ENABLED"] = False
+
+        templates = self.client.get("/api/v1/templates", headers=self.auth_headers())
+        template_list = templates.get_json()["data"]["list"]
+        plan_template = next(item for item in template_list if item["templateType"] == "THEORY")
+        courseware_template = next(item for item in template_list if item["templateType"] == "TRAINING")
+
+        create_plan = self.client.post(
+            "/api/v1/generation/plans",
+            headers=self.auth_headers(),
+            json={
+                "templateId": plan_template["templateId"],
+                "courseName": "水文地质学",
+                "hours": 16,
+                "audience": "本科二年级",
+                "goals": ["掌握基本概念", "理解地下水运动规律"],
+                "focusPoints": ["地下水补给与排泄", "含水层特征"],
+            },
+        )
+        self.assertEqual(create_plan.status_code, 200)
+        plan_id = create_plan.get_json()["data"]["result"]["targetId"]
+
+        create_courseware = self.client.post(
+            "/api/v1/generation/coursewares",
+            headers=self.auth_headers(),
+            json={
+                "planId": plan_id,
+                "coursewareTemplateId": courseware_template["templateId"],
+                "resources": [],
+            },
+        )
+        self.assertEqual(create_courseware.status_code, 200)
+        self.assertGreater(create_courseware.get_json()["data"]["result"]["slideCount"], 1)
+
+    def sample_plan(self):
+        return {
+            "course_name": "水文地质学",
+            "template_name": "标准化课件模板",
+            "course_type": "THEORY",
+            "course_type_label": "理论课",
+            "hours": 16,
+            "audience": "本科二年级",
+            "goals": ["掌握地下水基本概念", "理解地下水补给与排泄过程"],
+            "focus_points": ["地下水补给", "地下水排泄"],
+            "difficult_points": ["含水层参数识别"],
+            "cases": ["某灌区地下水位变化案例"],
+            "exercises": ["绘制地下水补给路径示意图"],
+            "homework": ["完成案例分析报告"],
+            "summary": "围绕地下水运动过程建立工程分析思路。",
+            "outline": [
+                {
+                    "title": "课程导入",
+                    "duration": "15分钟",
+                    "content": "地下水与水利工程的关系",
+                    "method": "情境导入",
+                    "knowledge_points": ["地下水", "水循环"],
+                },
+                {
+                    "title": "案例分析",
+                    "duration": "30分钟",
+                    "content": "灌区地下水位变化",
+                    "method": "案例讨论",
+                    "knowledge_points": ["补给", "排泄"],
+                },
+            ],
+        }
+
+    def test_ai_courseware_disabled_without_key_returns_none(self):
+        from backend.app.ai_generation import build_courseware_with_ai
+
+        with self.app.app_context():
+            self.app.config["AI_COURSEWARE_ENABLED"] = True
+            self.app.config["OPENAI_API_KEY"] = ""
+            result = build_courseware_with_ai(self.sample_plan(), {"templateName": "AI模板"}, [])
+        self.assertIsNone(result)
+
+    def test_openai_base_url_config_is_available(self):
+        with self.app.app_context():
+            self.app.config["OPENAI_BASE_URL"] = "https://example-openai-compatible.test/v1"
+            self.assertEqual(self.app.config["OPENAI_BASE_URL"], "https://example-openai-compatible.test/v1")
+
+    def test_config_loads_backend_env_file_without_committing_secret(self):
+        config_module = importlib.import_module("backend.app.config")
+        env_path = Path(config_module.__file__).resolve().parent.parent / ".env"
+        original = env_path.read_text(encoding="utf-8") if env_path.exists() else None
+        original_env = {
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+            "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL"),
+            "WATER_AI_COURSEWARE_ENABLED": os.environ.get("WATER_AI_COURSEWARE_ENABLED"),
+        }
+
+        try:
+            for key in original_env:
+                os.environ.pop(key, None)
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "OPENAI_API_KEY=env-file-test-key",
+                        "OPENAI_BASE_URL=https://example.test/v1",
+                        "WATER_AI_COURSEWARE_ENABLED=1",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            reloaded = importlib.reload(config_module)
+
+            self.assertEqual(reloaded.Config.OPENAI_API_KEY, "env-file-test-key")
+            self.assertEqual(reloaded.Config.OPENAI_BASE_URL, "https://example.test/v1")
+            self.assertTrue(reloaded.Config.AI_COURSEWARE_ENABLED)
+        finally:
+            if original is None:
+                env_path.unlink(missing_ok=True)
+            else:
+                env_path.write_text(original, encoding="utf-8")
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            importlib.reload(config_module)
+
+    def test_ai_courseware_normalizes_fake_openai_json(self):
+        from backend.app.ai_generation import build_courseware_with_ai
+
+        payload = {
+            "theme_name": "AI增强课件",
+            "slides": [
+                {
+                    "title": "地下水运动的工程意义",
+                    "subtitle": "从概念到灌区案例",
+                    "layout": "cover",
+                    "bullets": ["连接水循环与工程调度", "建立问题意识"],
+                    "image_prompt": "地下水补给过程教学示意图",
+                    "speaker_notes": "引导学生观察补给路径。",
+                },
+                {
+                    "title": "补给与排泄构成动态平衡",
+                    "layout": "image_right",
+                    "bullets": ["降雨入渗形成补给", "河道与蒸发形成排泄"],
+                    "image_prompt": "含水层补给排泄剖面图",
+                },
+            ],
+        }
+
+        class FakeResponses:
+            def create(self, **kwargs):
+                return SimpleNamespace(output_text=json.dumps(payload, ensure_ascii=False))
+
+        fake_client = SimpleNamespace(responses=FakeResponses())
+        with self.app.app_context():
+            self.app.config["AI_COURSEWARE_ENABLED"] = True
+            self.app.config["OPENAI_API_KEY"] = "test-key"
+            courseware = build_courseware_with_ai(
+                self.sample_plan(),
+                {"templateName": "AI模板", "templateType": "TRAINING"},
+                [],
+                client=fake_client,
+            )
+
+        self.assertIsNotNone(courseware)
+        self.assertEqual(courseware["theme_name"], "AI增强课件")
+        self.assertEqual(courseware["slide_count"], 2)
+        self.assertEqual(courseware["slides"][0]["layout"], "cover")
+        self.assertEqual(courseware["slides"][1]["image_prompt"], "含水层补给排泄剖面图")
+
+    def test_ai_courseware_bad_json_returns_none(self):
+        from backend.app.ai_generation import build_courseware_with_ai
+
+        class FakeResponses:
+            def create(self, **kwargs):
+                return SimpleNamespace(output_text="{not-json")
+
+        fake_client = SimpleNamespace(responses=FakeResponses())
+        with self.app.app_context():
+            self.app.config["AI_COURSEWARE_ENABLED"] = True
+            self.app.config["OPENAI_API_KEY"] = "test-key"
+            result = build_courseware_with_ai(self.sample_plan(), {"templateName": "AI模板"}, [], client=fake_client)
+
+        self.assertIsNone(result)
+
+    def test_layout_aware_pptx_includes_subtitle_and_image_prompt(self):
+        output_path = Path(self.temp_dir.name) / "layout_courseware.pptx"
+        slides_to_pptx(
+            [
+                {
+                    "title": "地下水运动的工程意义",
+                    "subtitle": "从水循环到灌区调度",
+                    "layout": "cover",
+                    "bullets": ["建立工程问题意识", "理解补给与排泄关系"],
+                    "image_prompt": "地下水补给过程教学示意图",
+                },
+                {
+                    "title": "补给与排泄构成动态平衡",
+                    "layout": "image_right",
+                    "bullets": ["降雨入渗形成补给", "河道排泄影响水位"],
+                    "image_prompt": "含水层补给排泄剖面图",
+                    "speaker_notes": "引导学生对照剖面图解释水位变化。",
+                },
+            ],
+            output_path,
+        )
+
+        self.assertEqual(self.count_pptx_slides(output_path), 2)
+        text = self.extract_pptx_text(output_path)
+        self.assertIn("从水循环到灌区调度", text)
+        self.assertIn("含水层补给排泄剖面图", text)
+        self.assertIn("引导学生对照剖面图解释水位变化。", text)
 
     def test_plan_to_courseware_flow(self):
         templates = self.client.get("/api/v1/templates", headers=self.auth_headers())
@@ -206,6 +444,75 @@ class BackendFlowTestCase(unittest.TestCase):
         self.assertEqual(upload_resource.status_code, 200)
         resource_id = upload_resource.get_json()["data"]["resourceId"]
         self.assertTrue(resource_id.startswith("RES-"))
+
+    def test_seeded_open_source_ppt_templates_are_registered(self):
+        response = self.client.get("/api/v1/templates?type=TRAINING&size=100", headers=self.auth_headers())
+        self.assertEqual(response.status_code, 200)
+        templates = response.get_json()["data"]["list"]
+        open_source_templates = [
+            item
+            for item in templates
+            if item["templateId"].startswith("TPL-PPT-")
+        ]
+
+        self.assertEqual(len(open_source_templates), 30)
+        self.assertTrue(all(item["templateName"].startswith("Open Source PPT - ") for item in open_source_templates))
+        self.assertTrue(all(item["templateType"] == "TRAINING" for item in open_source_templates))
+
+        with self.app.app_context():
+            execute("DELETE FROM t_template_version WHERE template_id = ?", ("TPL-PPT-001",))
+            execute("DELETE FROM t_template WHERE template_id = ?", ("TPL-PPT-001",))
+            seed_defaults()
+
+        reseeded_response = self.client.get("/api/v1/templates?type=TRAINING&size=100", headers=self.auth_headers())
+        self.assertEqual(reseeded_response.status_code, 200)
+        reseeded_templates = reseeded_response.get_json()["data"]["list"]
+        reseeded_open_source_templates = [
+            item
+            for item in reseeded_templates
+            if item["templateId"].startswith("TPL-PPT-")
+        ]
+        self.assertEqual(len(reseeded_open_source_templates), 30)
+
+    def test_courseware_ppt_template_falls_back_when_slide_count_mismatches(self):
+        templates = self.client.get("/api/v1/templates?type=TRAINING&size=100", headers=self.auth_headers())
+        self.assertEqual(templates.status_code, 200)
+        training_templates = templates.get_json()["data"]["list"]
+        courseware_template = next(item for item in training_templates if item["templateId"].startswith("TPL-PPT-"))
+
+        theory_templates = self.client.get("/api/v1/templates?type=THEORY&size=100", headers=self.auth_headers())
+        plan_template = next(item for item in theory_templates.get_json()["data"]["list"] if item["templateType"] == "THEORY")
+
+        create_plan = self.client.post(
+            "/api/v1/generation/plans",
+            headers=self.auth_headers(),
+            json={
+                "templateId": plan_template["templateId"],
+                "courseName": "水文地质学",
+                "hours": 16,
+                "audience": "本科二年级",
+                "goals": ["掌握基本概念", "理解地下水运动规律"],
+                "focusPoints": ["地下水补给与排泄", "含水层特征"],
+            },
+        )
+        self.assertEqual(create_plan.status_code, 200)
+        plan_id = create_plan.get_json()["data"]["result"]["targetId"]
+
+        create_courseware = self.client.post(
+            "/api/v1/generation/coursewares",
+            headers=self.auth_headers(),
+            json={
+                "planId": plan_id,
+                "coursewareTemplateId": courseware_template["templateId"],
+                "resources": [],
+            },
+        )
+        self.assertEqual(create_courseware.status_code, 200)
+        result = create_courseware.get_json()["data"]["result"]
+        self.assertGreater(result["slideCount"], 1)
+        pptx_path = Path(result["files"]["pptx"])
+        self.assertTrue(pptx_path.exists())
+        self.assertEqual(self.count_pptx_slides(pptx_path), result["slideCount"])
 
     def test_exam_flow(self):
         """从教学方案生成试卷 → 预览 → 导出 → 读取内容。"""

@@ -785,23 +785,39 @@ function renderTemplates() {
 }
 
 function fillTemplateOptions() {
-  const templateOptions = state.templates
+  const renderOptions = (templates) =>
+    templates
+      .map(
+        (template) =>
+          `<option value="${template.templateId}">${escapeHtml(template.templateName)} · ${escapeHtml(template.templateType)}</option>`
+      )
+      .join("");
+  const planTemplates = state.templates.filter(
+    (template) => ["THEORY", "PRACTICE", "REVIEW"].includes(template.templateType) && !template.templateId.startsWith("TPL-PPT-")
+  );
+  const coursewareTemplates = state.templates.filter(
+    (template) => template.templateType === "TRAINING" || template.templateId.startsWith("TPL-PPT-")
+  );
+  const planOptions = renderOptions(planTemplates);
+  const coursewareOptions = renderOptions(coursewareTemplates);
+  const allOptions = state.templates
     .map(
       (template) =>
         `<option value="${template.templateId}">${escapeHtml(template.templateName)} · ${escapeHtml(template.templateType)}</option>`
     )
     .join("");
-  elements["plan-template"].innerHTML = templateOptions || `<option value="">暂无模板</option>`;
-  elements["courseware-template"].innerHTML = templateOptions || `<option value="">暂无模板</option>`;
+  elements["plan-template"].innerHTML = planOptions || allOptions || `<option value="">暂无模板</option>`;
+  elements["courseware-template"].innerHTML = coursewareOptions || allOptions || `<option value="">暂无模板</option>`;
 
-  const defaultPlan = state.templates.find((template) => template.templateType === "THEORY") || state.templates[0];
-  if (defaultPlan && !state.templates.some((item) => item.templateId === elements["plan-template"].value)) {
+  const defaultPlan = planTemplates.find((template) => template.templateType === "THEORY") || planTemplates[0] || state.templates[0];
+  if (defaultPlan && !planTemplates.some((item) => item.templateId === elements["plan-template"].value)) {
     elements["plan-template"].value = defaultPlan.templateId;
   }
   const defaultCourseware =
-    state.templates.find((template) => /课件/.test(template.templateName) || template.templateType === "TRAINING") ||
+    coursewareTemplates.find((template) => /课件/.test(template.templateName) || template.templateId.startsWith("TPL-PPT-")) ||
+    coursewareTemplates[0] ||
     state.templates[0];
-  if (defaultCourseware && !state.templates.some((item) => item.templateId === elements["courseware-template"].value)) {
+  if (defaultCourseware && !coursewareTemplates.some((item) => item.templateId === elements["courseware-template"].value)) {
     elements["courseware-template"].value = defaultCourseware.templateId;
   }
 }
@@ -1044,6 +1060,10 @@ function renderTaskCard(task) {
           )
           .join("")
       : "";
+  const exportHint =
+    task.taskType === "PLAN" && task.status === "SUCCESS"
+      ? `<div class="task-hint">教学方案支持 DOCX、HTML、MD、JSON、PDF。要导出 PPT，请先在“教学课件生成”中选择该方案生成课件。</div>`
+      : "";
   return `
     <article class="task-card" data-task-status="${escapeHtml(task.status)}">
       <h4>${escapeHtml(task.taskType === "PLAN" ? "教学方案任务" : task.taskType === "EXAM" ? "试卷生成任务" : "教学课件任务")}</h4>
@@ -1060,6 +1080,7 @@ function renderTaskCard(task) {
         ${result.templateMode ? `<div>填充模式：${escapeHtml(result.templateMode)}</div>` : ""}
         ${warnings}
         ${task.errorMessage ? `<div>失败原因：${escapeHtml(task.errorMessage)}</div>` : ""}
+        ${exportHint}
       </div>
       <div class="task-actions">${previewButton}${editButton}${validateButton}${cancelButton}${retryButton}${exportButtons}</div>
     </article>

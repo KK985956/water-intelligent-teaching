@@ -407,50 +407,156 @@ def teaching_plan_lines(plan):
 
 
 def build_courseware(plan, template_meta, resource_items):
-    resource_names = [res.get("resourceName") or res.get("resource_name") or "" for res in resource_items]
+    resource_names = [item.get("resourceName") or item.get("resource_name") for item in resource_items]
+    resource_names = [name for name in resource_names if name]
+    course_name = plan["course_name"]
+    template_name = template_meta.get("template_name") or template_meta.get("templateName") or "教学课件模板"
+
+    def slide(title, subtitle, layout, bullets, image_prompt, speaker_notes):
+        clean_bullets = [str(item).strip() for item in bullets if str(item or "").strip()]
+        return {
+            "title": title,
+            "subtitle": subtitle,
+            "layout": layout,
+            "bullets": clean_bullets,
+            "image_prompt": image_prompt,
+            "speaker_notes": speaker_notes,
+        }
+
+    focus_text = "；".join(plan.get("focus_points", [])) or "结合课程主题提炼核心概念与工程应用"
+    difficult_text = "；".join(plan.get("difficult_points", [])) or "把抽象知识转化为可观察、可讨论、可练习的课堂任务"
+    case_items = (plan.get("cases") or []) + resource_names
+    if not case_items:
+        case_items = [f"围绕{course_name}设计一个真实工程情境案例", "组织学生从数据、现象、决策三个角度完成案例分析"]
+
     slides = [
-        {
-            "title": plan["course_name"],
-            "bullets": [
-                f"模板：{template_meta.get('template_name') or template_meta.get('templateName')}",
+        slide(
+            course_name,
+            f"{plan['course_type_label']} | {plan['audience']} | {plan['hours']} 课时",
+            "cover",
+            [
+                f"模板：{template_name}",
                 f"授课对象：{plan['audience']}",
-                f"总课时：{plan['hours']} 课时",
-                f"课程类型：{plan['course_type_label']}",
+                f"课时安排：{plan['hours']} 课时",
+                "学习路径：情境导入、概念建构、案例研讨、课堂练习、总结迁移",
             ],
-        },
-        {
-            "title": "教学目标",
-            "bullets": plan["goals"],
-        },
-        {
-            "title": "教学重难点",
-            "bullets": [
-                f"重点：{'；'.join(plan['focus_points'])}",
-                f"难点：{'；'.join(plan['difficult_points'])}",
+            f"{course_name}教学课件封面，水利工程课堂，数据大屏，河流与水库示意，现代教育风格",
+            "开场先给出课程问题情境，引导学生明确本节课要解决的工程问题和学习产出。",
+        ),
+        slide(
+            "教学目标",
+            "把知识掌握、能力训练和工程素养转化为可观察的课堂表现",
+            "two_column",
+            plan.get("goals", []),
+            f"{course_name}教学目标可视化，目标分层，知识能力素养三栏，清晰课堂板书风格",
+            "逐条说明目标对应的学习证据，例如能解释概念、能分析数据、能提出调度或管理建议。",
+        ),
+        slide(
+            "重点难点",
+            "先明确关键概念，再设计突破难点的活动路径",
+            "case_card",
+            [
+                f"教学重点：{focus_text}",
+                f"教学难点：{difficult_text}",
+                "突破策略：用流程图呈现原理，用案例数据承接分析，用课堂练习完成迁移",
             ],
-        },
+            f"{course_name}重点难点分析图，核心概念、难点突破、案例迁移三部分，教学设计风格",
+            "讲授时先解释重点为何重要，再说明难点容易出错的原因，并安排学生带着问题进入案例。",
+        ),
+        slide(
+            "课堂结构",
+            "用一条主线串联导入、讲授、互动、练习和评价",
+            "process",
+            [
+                "导入：提出真实水利工程问题，激活已有经验",
+                "讲授：建立概念框架，配合图示解释关键过程",
+                "互动：围绕案例数据开展小组讨论和即时反馈",
+                "练习：用任务单检验学生是否能迁移应用",
+            ],
+            f"{course_name}课堂流程信息图，导入讲授互动练习评价五步，简洁PPT流程图",
+            "这页用于给学生建立学习地图，也帮助教师把控每个环节的时间和活动重点。",
+        ),
     ]
 
-    for item in plan["outline"]:
+    layout_cycle = ["image_right", "process", "two_column", "case_card"]
+    for index, item in enumerate(plan.get("outline", []), start=1):
+        knowledge_points = "；".join(item.get("knowledge_points", [])) or item.get("content", "")
         slides.append(
-            {
-                "title": f"{item['title']}（{item['duration']}）",
-                "bullets": [
-                    f"教学内容：{item['content']}",
-                    f"教学方法：{item['method']}",
-                    f"知识点：{'；'.join(item['knowledge_points'])}",
+            slide(
+                f"{index}. {item['title']}（{item['duration']}）",
+                item.get("method", "课堂讲授与互动"),
+                layout_cycle[(index - 1) % len(layout_cycle)],
+                [
+                    f"教师活动：围绕“{item['content']}”进行讲解、追问或演示",
+                    f"学生活动：通过{item.get('method', '课堂互动')}完成观察、讨论或记录",
+                    f"知识支架：{knowledge_points}",
+                    "评价方式：用一个问题或小任务即时检查理解程度",
                 ],
-            }
+                f"{course_name}，{item['title']}，{item['content']}，课堂教学示意图，适合PPT配图",
+                f"本环节重点不是堆叠文字，而是用案例、图示或问题链帮助学生理解：{item['content']}。",
+            )
         )
 
-    slides.append({"title": "案例与资源", "bullets": plan["cases"] + resource_names})
-    slides.append({"title": "课堂练习", "bullets": plan["exercises"]})
-    slides.append({"title": "总结与作业", "bullets": [plan["summary"]] + plan["homework"]})
+    slides.append(
+        slide(
+            "案例与资源",
+            "把教学资源转化为课堂讨论材料",
+            "case_card",
+            case_items
+            + [
+                "教师先给出案例背景和关键数据，再要求学生判断问题、解释原因、提出措施",
+                "讨论结束后用标准答案或评价量规归纳学生观点",
+            ],
+            f"{course_name}课堂案例分析，水利工程现场、监测数据、讨论便签、教学资源卡片",
+            "如果上传了资源，这页作为资源入口；如果没有资源，则使用系统生成的案例进行讨论。",
+        )
+    )
+    slides.append(
+        slide(
+            "课堂练习",
+            "用任务驱动检查学生是否真正会用",
+            "process",
+            plan.get("exercises", [])
+            + [
+                "练习后要求学生说明判断依据，而不是只给出结论",
+                "教师根据共性错误补充讲解关键概念和操作步骤",
+            ],
+            f"{course_name}课堂练习场景，学生分组分析数据，教师巡视指导，PPT插画",
+            "练习环节建议控制在可完成的小任务，便于现场展示、互评和教师即时纠偏。",
+        )
+    )
+    slides.append(
+        slide(
+            "总结与作业",
+            "把本节课知识迁移到新的工程或教学情境",
+            "summary",
+            [plan.get("summary", "")] + plan.get("homework", []),
+            f"{course_name}课程总结页，知识网络、作业任务、迁移应用，清晰教学课件风格",
+            "总结时回到开场问题，要求学生用本节课的概念和方法重新解释问题并完成课后任务。",
+        )
+    )
+
+    if len(slides) < 8:
+        slides.insert(
+            -1,
+            slide(
+                "教学实施建议",
+                "为教师提供可执行的讲授、互动和评价提示",
+                "two_column",
+                [
+                    "讲授建议：每个新概念都配一个工程现象或数据片段",
+                    "互动建议：每十到十五分钟安排一次判断题、投票或小组讨论",
+                    "评价建议：关注学生解释依据、分析过程和迁移表达",
+                ],
+                f"{course_name}教师教学实施建议，课堂互动、即时评价、板书结构，PPT教育插画",
+                "当教学方案较短时补充本页，避免课件只有少量文字而缺少课堂操作价值。",
+            ),
+        )
 
     return {
-        "course_name": plan["course_name"],
-        "theme_name": template_meta.get("template_name") or template_meta.get("templateName"),
-        "template_name": template_meta.get("template_name") or template_meta.get("templateName"),
+        "course_name": course_name,
+        "theme_name": template_name,
+        "template_name": template_name,
         "audience": plan["audience"],
         "hours": plan["hours"],
         "course_type_label": plan["course_type_label"],
