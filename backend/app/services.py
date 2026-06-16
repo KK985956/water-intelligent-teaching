@@ -1469,18 +1469,19 @@ def _build_courseware_presentation(template_meta, courseware, result_dir):
     pptx_path = result_dir / "courseware.pptx"
     template_path = Path(template_meta["filePath"])
     warning = ""
+    generated_template_path = None
 
     if template_path.suffix.lower() in {".ppt", ".pptx"}:
         try:
             fill_ppt_template(template_path, pptx_path, _office_placeholder_map(build_courseware_template_context(courseware)))
             if count_pptx_slides(pptx_path) == courseware["slide_count"]:
                 return pptx_path, warning
-            warning = f"模板页数 {count_pptx_slides(pptx_path)} 与课件页数 {courseware['slide_count']} 不一致"
+            generated_template_path = template_path
         except Exception as exc:
             warning = str(exc)
 
     try:
-        slides_to_pptx(courseware["slides"], pptx_path)
+        slides_to_pptx(courseware["slides"], pptx_path, template_path=generated_template_path)
         return pptx_path, warning
     except Exception as exc:
         if warning:

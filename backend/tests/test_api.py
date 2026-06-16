@@ -474,7 +474,7 @@ class BackendFlowTestCase(unittest.TestCase):
         ]
         self.assertEqual(len(reseeded_open_source_templates), 30)
 
-    def test_courseware_ppt_template_falls_back_when_slide_count_mismatches(self):
+    def test_courseware_ppt_template_expands_single_slide_template(self):
         templates = self.client.get("/api/v1/templates?type=TRAINING&size=100", headers=self.auth_headers())
         self.assertEqual(templates.status_code, 200)
         training_templates = templates.get_json()["data"]["list"]
@@ -513,6 +513,8 @@ class BackendFlowTestCase(unittest.TestCase):
         pptx_path = Path(result["files"]["pptx"])
         self.assertTrue(pptx_path.exists())
         self.assertEqual(self.count_pptx_slides(pptx_path), result["slideCount"])
+        warnings = result.get("warnings", [])
+        self.assertFalse(any("模板页数" in warning for warning in warnings))
 
     def test_exam_flow(self):
         """从教学方案生成试卷 → 预览 → 导出 → 读取内容。"""

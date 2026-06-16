@@ -107,14 +107,16 @@ def html_to_pdf(html_path, output_path):
         return output_path
 
 
-def slides_to_pptx(slides, output_path):
+def slides_to_pptx(slides, output_path, template_path=None):
     output_path = Path(output_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     json_path = _write_json_file(slides)
+    template_path = Path(template_path).resolve() if template_path else ""
     script = r"""
 param(
     [Parameter(Mandatory = $true)][string]$JsonPath,
-    [Parameter(Mandatory = $true)][string]$OutputPath
+    [Parameter(Mandatory = $true)][string]$OutputPath,
+    [string]$TemplatePath = ''
 )
 $ErrorActionPreference = 'Stop'
 $slides = Get-Content -Raw -Encoding UTF8 -LiteralPath $JsonPath | ConvertFrom-Json
@@ -160,25 +162,46 @@ function Add-ImagePanel($slide, $slideData, $left, $top, $width, $height) {
     Add-TextBox $slide ([string]$slideData.image_prompt) ($left + 18) ($top + 58) ($width - 36) ($height - 78) 15 $false 2631720 | Out-Null
 }
 
+function New-OutputSlide($presentation, $useTemplate) {
+    if ($useTemplate -and $presentation.Slides.Count -gt 0) {
+        $presentation.Slides.Item(1).Copy()
+        $pasted = $presentation.Slides.Paste($presentation.Slides.Count + 1)
+        return $pasted.Item(1)
+    }
+    return $presentation.Slides.Add($presentation.Slides.Count + 1, 12)
+}
+
 try {
     $ppt = New-Object -ComObject PowerPoint.Application
     $ppt.Visible = -1
-    $presentation = $ppt.Presentations.Add()
-    while ($presentation.Slides.Count -gt 0) {
-        $presentation.Slides.Item(1).Delete()
+    $useTemplate = -not [string]::IsNullOrWhiteSpace($TemplatePath) -and (Test-Path -LiteralPath $TemplatePath)
+    if ($useTemplate) {
+        $presentation = $ppt.Presentations.Open($TemplatePath, $true, $false, $false)
+        while ($presentation.Slides.Count -gt 1) {
+            $presentation.Slides.Item($presentation.Slides.Count).Delete()
+        }
+    } else {
+        $presentation = $ppt.Presentations.Add()
+        while ($presentation.Slides.Count -gt 0) {
+            $presentation.Slides.Item(1).Delete()
+        }
     }
     foreach ($slideData in $slides) {
-        $slide = $presentation.Slides.Add($presentation.Slides.Count + 1, 12)
+        $slide = New-OutputSlide $presentation $useTemplate
         $layout = [string]$slideData.layout
         $titleText = [string]$slideData.title
         $subtitle = [string]$slideData.subtitle
         $bodyText = Join-Bullets $slideData.bullets
         $notes = [string]$slideData.speaker_notes
 
-        Add-FilledBox $slide 0 0 720 405 16448250 16448250 | Out-Null
+        if (-not $useTemplate) {
+            Add-FilledBox $slide 0 0 720 405 16448250 16448250 | Out-Null
+        }
 
         if ($layout -eq 'cover') {
-            Add-FilledBox $slide 0 0 720 405 13785622 13785622 | Out-Null
+            if (-not $useTemplate) {
+                Add-FilledBox $slide 0 0 720 405 13785622 13785622 | Out-Null
+            }
             Add-TextBox $slide $titleText 58 96 590 90 34 $true 2631720 | Out-Null
             Add-TextBox $slide $subtitle 60 184 560 42 19 $false 5066061 | Out-Null
             Add-TextBox $slide $bodyText 64 250 520 90 17 $false 2631720 | Out-Null
@@ -232,6 +255,9 @@ try {
             Add-TextBox $slide $notes 46 366 620 24 10 $false 6710886 | Out-Null
         }
     }
+    if ($useTemplate -and $presentation.Slides.Count -gt $slides.Count) {
+        $presentation.Slides.Item(1).Delete()
+    }
     $presentation.SaveAs($OutputPath, 24)
 }
 finally {
@@ -250,7 +276,7 @@ finally {
     try:
         return _run_powershell_script(
             script,
-            [json_path, output_path],
+            [json_path, output_path, template_path],
             timeout=90,
             failure_message="PowerPoint did not generate courseware",
             expected_output=output_path,
